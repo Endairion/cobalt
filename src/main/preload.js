@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('cobalt', {
   },
   query: {
     run: (id, tabKey, sql, opts) => call('query:run', id, tabKey, sql, opts),
+    filter: (id, tabKey, baseSql, filters, opts) => call('query:filter', id, tabKey, baseSql, filters, opts),
     cancel: (id, tabKey) => call('query:cancel', id, tabKey),
     release: (id, tabKey) => call('query:release', id, tabKey),
     apply: (id, change) => call('grid:apply', id, change),

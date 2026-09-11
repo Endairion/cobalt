@@ -41,6 +41,30 @@ back everything and reports the SQLSTATE.
 text Postgres produced, so nothing is mangled by JS number or Date coercion on the way
 to the grid and back.
 
+**Filter row.** `Ctrl+Shift+F` drops a filter box under every column header. Filters
+run on the *server*: the base query is wrapped in a subquery, the condition goes on the
+outside, and any trailing `LIMIT`/`OFFSET` is hoisted out past it — so filtering a
+`limit 500` table view searches the whole table, not just the 500 rows already loaded.
+Postgres propagates each column's origin through the wrapper, so a filtered result
+stays editable. Values are always bound as parameters and operators come from a fixed
+allowlist; nothing you type reaches the SQL text.
+
+The syntax is forgiving — a bare word means "contains" on a text column and "equals"
+everywhere else:
+
+| you type | you get |
+|---|---|
+| `bob` | `ilike '%bob%'` on text, `= bob` otherwise |
+| `>= 100`, `!= draft`, `< 5` | that comparison |
+| `%ob%` | `ilike '%ob%'` verbatim |
+| `~ ^user[0-9]+` | regex (`~*`, `!~`, `!~*` too) |
+| `in a, b, 'c, d'` | `in (…)`, quotes protect commas |
+| `null`, `!null` | `is null` / `is not null` |
+| `'bob'` | exact match, quotes override "contains" |
+
+Filters across columns are ANDed. `Enter` applies, `Esc` clears the box then closes the
+row, and the toolbar shows how many are active with a Clear button.
+
 **Errors.** Message, SQLSTATE, detail, hint, plus the offending line with a caret under
 the error position — and the editor caret jumps there.
 
@@ -58,6 +82,7 @@ the error position — and the editor caret jumps there.
 | `Ctrl+N` | New connection |
 | `Ctrl+R` | Refresh schema |
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
+| `Ctrl+Shift+F` | Toggle the filter row |
 | `Ctrl+Shift+S` | Commit grid changes |
 | `Ctrl+Shift+A` | Add row |
 | `Ctrl+Backspace` | Toggle row delete |
@@ -73,12 +98,19 @@ docker run -d --name cobalt-test-pg -e POSTGRES_PASSWORD=cobalt -e POSTGRES_USER
   -e POSTGRES_DB=cobalt -p 15432:5432 postgres:16-alpine
 docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
-node test/db.test.js      # 24 checks: splitting, editability, commits, sessions, cancel
+node test/db.test.js       # 24 checks: splitting, editability, commits, sessions, cancel
+node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
 ```
 
 `test/smoke.js` drives the app through `--smoke=out.png,cmd1,cmd2`, which waits for the
 renderer's ready signal, fires menu commands, and screenshots the result.
+`--smoke-js=<expr>` adds a DOM-level step for interactions no menu command covers, and
+prints what the expression returned. `test/inspect.js` wraps that for one-off poking:
+
+```bash
+node test/inspect.js "query:run" "document.querySelectorAll('.grow').length"
+```
 
 ## Layout
 
@@ -91,11 +123,12 @@ src/main/
 src/renderer/
   app.js        state, sidebar, tabs, results, dialogs, palette
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
-  grid.js       virtualized editable grid
+  grid.js       virtualized editable grid + filter row
+  filter.js     filter expression parser
 ```
 
 ## Not built yet
 
-Server-side paging (results are capped at 10k rows), filter row above the grid,
+Server-side paging (results are capped at 10k rows), OR between filters,
 query history, saved snippets, ERD, `EXPLAIN` visualization, other engines. The driver
 seam is `src/main/db.js`; the renderer never speaks Postgres directly.

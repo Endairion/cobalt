@@ -436,6 +436,7 @@ async function runScript(all) {
   if (!sql.trim()) { toast('Nothing to run.'); return; }
 
   tab.running = true;
+  tab.filterBaseSql = null;          // a fresh run is the new filter base
   tab.runStarted = Date.now();
   updateToolbar();
   setStatus('Running…');
@@ -469,6 +470,53 @@ async function runScript(all) {
     tab.running = false;
     updateToolbar();
     renderTabs();
+  }
+}
+
+/**
+ * Re-run the current result's query with column filters applied.
+ * The base SQL is remembered per tab so successive edits filter the original
+ * query rather than stacking wrappers on the previous filtered one.
+ */
+async function applyFilters(tab, specs) {
+  const res = tab.results[tab.activeResult];
+  if (!res || res.error || !tab.connId) return;
+  if (!tab.filterBaseSql) tab.filterBaseSql = res.baseSql || res.sql;
+  const baseSql = tab.filterBaseSql;
+
+  if (tab.grid && tab.grid.dirtyCount()) {
+    const ok = await api.ui.confirm({
+      title: 'Uncommitted changes',
+      message: `Re-running with a filter discards ${tab.grid.changeSummary()}.`,
+      confirmLabel: 'Discard and filter',
+      destructive: true,
+    });
+    if (!ok) return;
+    tab.grid.discard();
+  }
+
+  setStatus(specs.length ? 'Filtering…' : 'Clearing filter…');
+  tab.reloadingFilter = true;
+  try {
+    const { results } = await api.query.filter(tab.connId, tab.id, baseSql, specs, { maxRows: 10000 });
+    const next = results[0];
+    if (next.error) {
+      toast(next.error.message, 'err');
+      setStatus('');
+      return;
+    }
+    next.baseSql = baseSql;
+    tab.results[tab.activeResult] = next;
+    renderResults();
+    setStatus(
+      `${fmtNum(next.rows.length)}${next.truncated ? '+' : ''} rows · ${fmtMs(next.elapsedMs)}` +
+      (specs.length ? ` · ${specs.length} filter${specs.length > 1 ? 's' : ''}` : '')
+    );
+  } catch (err) {
+    toast(`Filter failed: ${err.message}`, 'err');
+    setStatus('');
+  } finally {
+    tab.reloadingFilter = false;
   }
 }
 
@@ -529,11 +577,12 @@ function renderResults() {
     tab.grid = new ResultGrid(el.gridHost, {
       onDirtyChange: () => { renderGridToolbar(); renderTabs(); },
       onStatus: (s) => { el.statusRight.textContent = s; },
+      onFilter: (specs) => applyFilters(tab, specs),
       readOnly: !!(state.conns.get(tab.connId) || {}).readOnly,
     });
   }
   tab.grid.el.style.display = '';
-  if (tab.grid.result !== res) tab.grid.load(res);
+  if (tab.grid.result !== res) tab.grid.load(res, { keepFilters: !!tab.reloadingFilter });
   renderGridToolbar();
 }
 
@@ -548,15 +597,22 @@ function renderGridToolbar() {
   bits.push(`<span class="pill">${fmtMs(res.elapsedMs)}</span>`);
   if (res.source) bits.push(`<span class="pill">${esc(res.source.schema)}.${esc(res.source.table)}</span>`);
   if (!res.editable) bits.push(`<span class="pill warn" title="${esc(res.notEditableReason || '')}">read-only</span>`);
+  const nFilters = g ? g.activeFilters() : 0;
+  if (nFilters) bits.push(`<span class="pill on">${nFilters} filter${nFilters > 1 ? 's' : ''}</span>`);
+
+  const filterBtn =
+    `<button class="btn small ${g && g.filterVisible ? 'primary' : 'ghost'}" data-act="filter" title="Filter results (Ctrl+Shift+F)">Filter</button>` +
+    (nFilters ? '<button class="btn small ghost" data-act="clearFilters">Clear</button>' : '');
 
   const actions = res.editable
     ? `<span class="spacer"></span>
+       ${filterBtn}
        <button class="btn small ghost" data-act="add">+ Row</button>
        <button class="btn small ghost" data-act="del">Delete row</button>
        <button class="btn small ${dirty ? 'primary' : ''}" data-act="commit" ${dirty ? '' : 'disabled'}>Commit${dirty ? ` (${g.changeSummary()})` : ''}</button>
        <button class="btn small ghost" data-act="discard" ${dirty ? '' : 'disabled'}>Discard</button>
        <button class="btn small ghost" data-act="csv">CSV</button>`
-    : `<span class="spacer"></span><button class="btn small ghost" data-act="csv">CSV</button>`;
+    : `<span class="spacer"></span>${filterBtn}<button class="btn small ghost" data-act="csv">CSV</button>`;
 
   el.gridToolbar.innerHTML = bits.join('') + actions;
 }
@@ -572,6 +628,8 @@ el.gridToolbar.addEventListener('click', (e) => {
     case 'commit': commitGrid(); break;
     case 'discard': tab.grid.discard(); renderGridToolbar(); break;
     case 'csv': exportCsv(); break;
+    case 'filter': tab.grid.toggleFilter(); renderGridToolbar(); break;
+    case 'clearFilters': tab.grid.clearFilters(); renderGridToolbar(); break;
   }
 });
 
@@ -642,7 +700,8 @@ async function commitGrid() {
     const applied = await api.query.apply(tab.connId, change);
     toast(`Committed: ${applied.updated} updated, ${applied.inserted} inserted, ${applied.deleted} deleted.`, 'ok');
     tab.grid.discard();
-    await runScript(false);
+    if (tab.grid.activeFilters()) tab.grid.applyFilters();
+    else await runScript(false);
   } catch (err) {
     const pg = err.pgError || {};
     toast(`Commit failed (rolled back): ${pg.detail || err.message}`, 'err');
@@ -1058,6 +1117,12 @@ api.ui.onMenu((cmd) => {
     case 'grid:discard': if (tab && tab.grid) { tab.grid.discard(); renderGridToolbar(); } break;
     case 'grid:addRow': if (tab && tab.grid) tab.grid.addRow(); break;
     case 'grid:deleteRow': if (tab && tab.grid) tab.grid.toggleDelete(); break;
+    case 'grid:filter':
+      if (tab && tab.grid) { tab.grid.toggleFilter(); renderGridToolbar(); }
+      break;
+    case 'grid:clearFilters':
+      if (tab && tab.grid) { tab.grid.clearFilters(); renderGridToolbar(); }
+      break;
     case 'result:csv': exportCsv(); break;
     case 'palette:tables': openTablePalette(); break;
     case 'palette:commands': openCommandPalette(); break;

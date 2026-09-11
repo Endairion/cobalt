@@ -73,6 +73,13 @@ async function runSmoke(w) {
     try {
       if (!await untilReady(25000)) throw new Error('renderer never reported ready');
       for (const c of cmds) { send(c); await wait(1200); }
+      // Optional DOM-level step for interactions no menu command covers.
+      const jsArg = process.argv.find((a) => a.startsWith('--smoke-js='));
+      if (jsArg) {
+        const out = await w.webContents.executeJavaScript(jsArg.slice('--smoke-js='.length));
+        if (out !== undefined) console.log(`[smoke] js ${JSON.stringify(out)}`);
+        await wait(1500);
+      }
       // An unfocused window stops producing frames, so capturePage would return a
       // stale one: pump two animation frames and confirm the DOM settled first.
       await w.webContents.executeJavaScript(
@@ -123,6 +130,9 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Add Row', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('grid:addRow') },
         { label: 'Delete Selected Rows', accelerator: 'CmdOrCtrl+Backspace', click: () => send('grid:deleteRow') },
+        { type: 'separator' },
+        { label: 'Filter Results', accelerator: 'CmdOrCtrl+Shift+F', click: () => send('grid:filter') },
+        { label: 'Clear Filters', click: () => send('grid:clearFilters') },
         { type: 'separator' },
         { label: 'Export Result as CSV…', click: () => send('result:csv') },
       ],
@@ -204,6 +214,7 @@ handle('conn:ddl', (id, schema, table) => manager.tableDdl(id, schema, table));
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));
 
 handle('query:run', (id, tabKey, sql, opts) => manager.run(id, tabKey, sql, opts || {}));
+handle('query:filter', (id, tabKey, baseSql, filters, opts) => manager.runFiltered(id, tabKey, baseSql, filters, opts || {}));
 handle('query:cancel', (id, tabKey) => manager.cancel(id, tabKey));
 handle('query:release', (id, tabKey) => manager.releaseTab(id, tabKey));
 handle('grid:apply', (id, change) => manager.applyChanges(id, change));

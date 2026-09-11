@@ -6,14 +6,20 @@
  * by the app with the change set this grid produces.
  */
 
+import { parseFilter } from './filter.js';
+
 const ROW_H = 24;
 const HEAD_H = 26;
+const FILTER_H = 26;
 const NUM_W = 52;
 const MIN_W = 54;
 const MAX_AUTO_W = 380;
 const OVERSCAN = 8;
 
 const NUMERIC_OIDS = new Set([20, 21, 23, 26, 700, 701, 1700]);
+
+const escAttr = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 let measureCtx = null;
 function textWidth(s, font) {
@@ -25,11 +31,15 @@ function textWidth(s, font) {
 const NULL_TOKEN = Symbol('null');
 
 export class ResultGrid {
-  constructor(host, { onDirtyChange, onStatus, readOnly = false } = {}) {
+  constructor(host, { onDirtyChange, onStatus, onFilter, readOnly = false } = {}) {
     this.host = host;
     this.onDirtyChange = onDirtyChange || (() => {});
     this.onStatus = onStatus || (() => {});
+    this.onFilter = onFilter || (() => {});
     this.readOnly = readOnly;
+    this.filterVisible = false;
+    this.filterText = new Map();   // colIndex -> raw text the user typed
+    this.filterError = new Map();  // colIndex -> parse error
 
     this.result = null;
     this.columns = [];
@@ -53,9 +63,12 @@ export class ResultGrid {
     this.inner.className = 'grid-inner';
     this.head = document.createElement('div');
     this.head.className = 'grid-head';
+    this.filterRow = document.createElement('div');
+    this.filterRow.className = 'grid-filter';
+    this.filterRow.hidden = true;
     this.body = document.createElement('div');
     this.body.className = 'grid-body';
-    this.inner.append(this.head, this.body);
+    this.inner.append(this.head, this.filterRow, this.body);
     this.el.append(this.inner);
     host.append(this.el);
 
@@ -65,11 +78,105 @@ export class ResultGrid {
     this.el.addEventListener('keydown', (e) => this.onKeyDown(e));
     this.head.addEventListener('click', (e) => this.onHeadClick(e));
     this.head.addEventListener('mousedown', (e) => this.onHeadMouseDown(e));
+
+    this.filterRow.addEventListener('input', (e) => {
+      const input = e.target.closest('input[data-filter]');
+      if (!input) return;
+      this.filterText.set(Number(input.dataset.filter), input.value);
+    });
+    this.filterRow.addEventListener('keydown', (e) => {
+      const input = e.target.closest('input[data-filter]');
+      if (!input) return;
+      if (e.key === 'Enter') { e.preventDefault(); this.applyFilters(); }
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        if (input.value) { input.value = ''; this.filterText.delete(Number(input.dataset.filter)); }
+        else this.toggleFilter(false);
+      }
+    });
+  }
+
+  /* ------------------------------ filters ------------------------------ */
+
+  headOffset() { return HEAD_H + (this.filterVisible ? FILTER_H : 0); }
+
+  toggleFilter(show) {
+    this.filterVisible = show === undefined ? !this.filterVisible : !!show;
+    this.filterRow.hidden = !this.filterVisible;
+    if (!this.filterVisible && this.filterText.size) {
+      this.filterText.clear();
+      this.filterError.clear();
+      this.applyFilters();
+    }
+    this.render();
+    if (this.filterVisible) {
+      const first = this.filterRow.querySelector('input[data-filter]:not([disabled])');
+      if (first) first.focus();
+    }
+  }
+
+  /** Column names that appear more than once can't be referenced unambiguously. */
+  ambiguous(name) {
+    return this.columns.filter((c) => c.name === name).length > 1;
+  }
+
+  /** Parse every box; hand the caller the specs, or surface the first bad one. */
+  applyFilters() {
+    const specs = [];
+    this.filterError.clear();
+    for (const [col, text] of this.filterText) {
+      if (!String(text).trim()) continue;
+      const column = this.columns[col];
+      if (!column) continue;
+      const parsed = parseFilter(text, column);
+      if (!parsed) continue;
+      if (parsed.error) { this.filterError.set(col, parsed.error); continue; }
+      specs.push({ ...parsed, name: column.name, column: col });
+    }
+    this.renderFilterRow();
+    if (this.filterError.size) {
+      this.onStatus([...this.filterError.values()][0]);
+      return;
+    }
+    this.onFilter(specs);
+  }
+
+  activeFilters() {
+    return [...this.filterText.entries()].filter(([, v]) => String(v).trim()).length;
+  }
+
+  clearFilters() {
+    this.filterText.clear();
+    this.filterError.clear();
+    this.renderFilterRow();
+    this.onFilter([]);
+  }
+
+  renderFilterRow() {
+    if (!this.columns.length) { this.filterRow.innerHTML = ''; return; }
+    const parts = [`<div class="gf rownum" style="width:${NUM_W}px"></div>`];
+    this.columns.forEach((c, i) => {
+      const amb = this.ambiguous(c.name);
+      const err = this.filterError.get(i);
+      const val = this.filterText.get(i) || '';
+      const title = amb
+        ? `"${c.name}" appears more than once in this result, so it can't be filtered unambiguously`
+        : (err || `Filter ${c.name} — try: bob · >= 100 · != draft · %ob% · in a, b · null`);
+      parts.push(
+        `<div class="gf${err ? ' err' : ''}" style="width:${this.widths[i]}px">` +
+        `<input type="text" data-filter="${i}" value="${escAttr(val)}" spellcheck="false"` +
+        ` ${amb ? 'disabled' : ''} placeholder="${amb ? '—' : 'filter'}" title="${escAttr(title)}" /></div>`
+      );
+    });
+    this.filterRow.innerHTML = parts.join('');
+    this.filterRow.style.width = `${this.totalWidth()}px`;
+    this.filterRow.style.top = `${HEAD_H}px`;
   }
 
   /* ----------------------------- data ----------------------------- */
 
-  load(result) {
+  load(result, { keepFilters = false } = {}) {
+    if (!keepFilters) { this.filterText.clear(); this.filterError.clear(); }
     this.result = result;
     this.columns = result.columns || [];
     this.rows = result.rows || [];
@@ -79,7 +186,9 @@ export class ResultGrid {
     this.deletes.clear();
     this.inserts = [];
     this.cursor = { row: 0, col: 0 };
-    this.autoSize();
+    // Keep column widths steady across a filter re-run, so the grid doesn't
+    // reflow under the cursor every time you type a filter.
+    if (!keepFilters || !this.widths.length || this.widths.length !== this.columns.length) this.autoSize();
     this.render();
     this.onDirtyChange(this.dirtyCount());
   }
@@ -153,6 +262,7 @@ export class ResultGrid {
 
   render() {
     this.renderHead();
+    if (this.filterVisible) this.renderFilterRow();
     this.body.style.height = `${this.totalRows() * ROW_H}px`;
     this.inner.style.width = `${this.totalWidth()}px`;
     this.renderRows();
@@ -182,8 +292,9 @@ export class ResultGrid {
   renderRows() {
     const total = this.totalRows();
     const scrollTop = this.el.scrollTop;
-    const viewH = this.el.clientHeight - HEAD_H;
-    let first = Math.max(0, Math.floor((scrollTop - HEAD_H) / ROW_H) - OVERSCAN);
+    const head = this.headOffset();
+    const viewH = this.el.clientHeight - head;
+    let first = Math.max(0, Math.floor((scrollTop - head) / ROW_H) - OVERSCAN);
     let last = Math.min(total, Math.ceil((scrollTop + viewH) / ROW_H) + OVERSCAN);
     if (total === 0) {
       this.body.innerHTML = '';
@@ -303,9 +414,9 @@ export class ResultGrid {
   scrollToCursor() {
     const top = this.cursor.row * ROW_H;
     const viewTop = this.el.scrollTop;
-    const viewBottom = viewTop + this.el.clientHeight - HEAD_H;
+    const viewBottom = viewTop + this.el.clientHeight - this.headOffset();
     if (top < viewTop) this.el.scrollTop = top;
-    else if (top + ROW_H > viewBottom) this.el.scrollTop = top + ROW_H - this.el.clientHeight + HEAD_H;
+    else if (top + ROW_H > viewBottom) this.el.scrollTop = top + ROW_H - this.el.clientHeight + this.headOffset();
 
     let x = NUM_W;
     for (let i = 0; i < this.cursor.col; i++) x += this.widths[i];

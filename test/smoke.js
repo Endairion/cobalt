@@ -39,6 +39,22 @@ const shots = [
   { file: 'palette.png', cmds: ['palette:tables'] },
   { file: 'report.png', cmds: ['tab:next', 'query:run'] },
   { file: 'error.png', cmds: ['tab:next', 'tab:next', 'query:run'] },
+  {
+    file: 'filter.png',
+    cmds: ['query:run', 'grid:filter'],
+    // Type into two filter boxes and press Enter, the way a person would.
+    js: `(() => {
+      const set = (col, text) => {
+        const i = document.querySelector('input[data-filter="' + col + '"]');
+        i.value = text;
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      set(2, 'customer 1');
+      set(3, '>= 500');
+      const last = document.querySelector('input[data-filter="3"]');
+      last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`,
+  },
 ];
 
 (async () => {
@@ -47,6 +63,7 @@ const shots = [
     const profile = seed();
     const target = path.join(outDir, s.file);
     const args = ['.', `--smoke=${[target, ...s.cmds].join(',')}`, `--user-data-dir=${profile}`];
+    if (s.js) args.push(`--smoke-js=${s.js}`);
     const code = await new Promise((resolve) => {
       const p = spawn(electron, args, { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
       let buf = '';
