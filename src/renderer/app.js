@@ -84,13 +84,32 @@ function activeTab() {
   return state.tabs.find((t) => t.id === state.activeTabId) || null;
 }
 
+/**
+ * The lowest "Query N" not currently on screen.
+ *
+ * Deliberately not the id counter: ids must never be reused, but the label is
+ * just how a person refers to the tab, so closing Query 2 should free the name.
+ * Sharing one counter made the number climb every time a tab was closed —
+ * including the replacement tab opened when you close the last one.
+ */
+function nextQueryNumber() {
+  const used = new Set();
+  for (const t of state.tabs) {
+    const m = /^Query (\d+)$/.exec(t.title);
+    if (m) used.add(Number(m[1]));
+  }
+  let n = 1;
+  while (used.has(n)) n++;
+  return n;
+}
+
 function newTab({ connId = state.activeConnId, title, sql = '', run = false, kind = 'query' } = {}) {
-  const id = `t${++state.tabSeq}`;
+  const id = `t${++state.tabSeq}`;                 // unique for the session, never reused
   const tab = {
     id,
     connId,
     kind,
-    title: title || `Query ${state.tabSeq}`,
+    title: title || `Query ${nextQueryNumber()}`,
     editorState: editor.makeState(sql),
     results: [],
     activeResult: 0,
@@ -147,8 +166,9 @@ async function closeTab(id) {
       state.activeTabId = next.id;
       editor.swapState(next.editorState);
     } else {
+      // Closing the last tab leaves a fresh one behind rather than an empty window.
       state.activeTabId = null;
-      newTab({ title: 'Query 1' });
+      newTab();
       return;
     }
   }

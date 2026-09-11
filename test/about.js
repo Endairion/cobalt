@@ -11,6 +11,7 @@ const electron = require('electron');
 const outDir = path.join(__dirname, '..', 'shots');
 fs.mkdirSync(outDir, { recursive: true });
 const pkg = require('../package.json');
+const { since } = require('../src/shared/changelog');
 
 /** seenVersion: null = brand new install, a string = upgraded from that build. */
 const seed = (seenVersion) => {
@@ -81,9 +82,11 @@ const expect = (cond, label) => {
   expect(upJs.open === true, 'upgrading opens What\'s New');
   expect(upJs.title === "What's new since 0.2.0",
     `the title names the version they came from, not the oldest listed (got "${upJs.title}")`);
-  expect(Array.isArray(upJs.versions) && upJs.versions.join(',') === '0.4.0,0.3.0,0.2.1',
-    `shows only releases after 0.2.0 (got ${upJs.versions})`);
-  expect(upJs.openCount === 3, 'each new release is expanded');
+  // Derived, not hardcoded — otherwise every release breaks this test.
+  const expectedAfter = since('0.2.0').map((r) => r.version);
+  expect(Array.isArray(upJs.versions) && upJs.versions.join(',') === expectedAfter.join(','),
+    `shows only releases after 0.2.0 (want ${expectedAfter}, got ${upJs.versions})`);
+  expect(upJs.openCount === expectedAfter.length, 'each new release is expanded');
 
   // 3. About, reached from the menu.
   const about = await run('about-dialog.png', pkg.version, `(async () => {
