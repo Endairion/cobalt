@@ -1,6 +1,6 @@
 {
   "name": "cobalt",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cobalt - a fast PostgreSQL editor",
   "main": "src/main/main.js",
   "scripts": {

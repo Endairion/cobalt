@@ -3,6 +3,22 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.5.0 — Frameless window
+*2026-09-11*
+
+The OS title bar is gone; the tab strip is the title bar.
+
+### Added
+- The maximise glyph swaps to a restore glyph, and the chrome dims when the window loses focus, the way native apps do.
+- Rounded window corners while restored, squared off when maximised.
+
+### Changed
+- The window is frameless. Minimise, maximise and close are drawn at the end of the tab strip as thin monochrome glyphs that light up on hover, with close turning red. macOS keeps its traffic lights, inset into the sidebar header.
+- Dragging the tab strip moves the window and double-clicking it still maximises, because the whole strip is a drag region and tabs opt back out.
+
+### Fixed
+- The collapsed filter row was still occupying its 26 pixels under the grid header: an author display rule was overriding the [hidden] attribute, which left a dead band above the first row and shifted the virtualisation maths by the same amount.
+
 ## 0.4.0 — Version history in the app
 *2026-09-11*
 

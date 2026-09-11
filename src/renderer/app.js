@@ -1323,6 +1323,34 @@ window.addEventListener('resize', () => {
   if (t && t.grid) t.grid.render();
 });
 
+/* --------------------------- window chrome --------------------------- */
+
+/**
+ * The window is frameless everywhere except macOS, which keeps its traffic
+ * lights. Everything else draws its own controls at the end of the tab strip;
+ * double-clicking the drag region still maximises, because Chromium handles
+ * that for `-webkit-app-region: drag` areas.
+ */
+function applyWindowState(st) {
+  if (!st) return;
+  document.body.classList.toggle('is-maximized', !!st.maximized || !!st.fullScreen);
+  document.body.classList.toggle('is-blurred', st.focused === false);
+  const max = $('win-max');
+  if (max) {
+    max.title = st.maximized ? 'Restore' : 'Maximise';
+    max.setAttribute('aria-label', max.title);
+  }
+}
+
+function initWindowChrome() {
+  if (api.platform === 'darwin') document.body.classList.add('is-mac');
+  $('win-min').addEventListener('click', () => api.window.minimize());
+  $('win-max').addEventListener('click', () => api.window.toggleMaximize());
+  $('win-close').addEventListener('click', () => api.window.close());
+  api.window.onState(applyWindowState);
+  api.window.state().then(applyWindowState).catch(() => {});
+}
+
 /* ------------------------------- menu ------------------------------- */
 
 api.ui.onMenu((cmd) => {
@@ -1364,6 +1392,8 @@ api.ui.onMenu((cmd) => {
 /* ------------------------------- boot ------------------------------- */
 
 async function boot() {
+  initWindowChrome();
+
   editor = new SqlEditor(el.editorHost, {
     onChange: () => { updateToolbar(); saveWorkspace(); },
     onRun: () => runScript(false),

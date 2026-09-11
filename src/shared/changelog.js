@@ -13,6 +13,19 @@
 
 const releases = [
   {
+    version: '0.5.0',
+    date: '2026-09-11',
+    title: 'Frameless window',
+    summary: 'The OS title bar is gone; the tab strip is the title bar.',
+    changes: [
+      { type: 'changed', text: 'The window is frameless. Minimise, maximise and close are drawn at the end of the tab strip as thin monochrome glyphs that light up on hover, with close turning red. macOS keeps its traffic lights, inset into the sidebar header.' },
+      { type: 'changed', text: 'Dragging the tab strip moves the window and double-clicking it still maximises, because the whole strip is a drag region and tabs opt back out.' },
+      { type: 'added', text: 'The maximise glyph swaps to a restore glyph, and the chrome dims when the window loses focus, the way native apps do.' },
+      { type: 'added', text: 'Rounded window corners while restored, squared off when maximised.' },
+      { type: 'fixed', text: 'The collapsed filter row was still occupying its 26 pixels under the grid header: an author display rule was overriding the [hidden] attribute, which left a dead band above the first row and shifted the virtualisation maths by the same amount.' },
+    ],
+  },
+  {
     version: '0.4.0',
     date: '2026-09-11',
     title: 'Version history in the app',
