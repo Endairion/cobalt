@@ -2,6 +2,7 @@
 
 const { Pool, Client, types } = require('pg');
 const { splitStatements } = require('./sqlsplit');
+const { summarize, compare } = require('../shared/stats');
 
 /* ------------------------------------------------------------------ *
  * Type handling
@@ -116,6 +117,7 @@ class Connection {
   async cancel(key) {
     const s = this.sessions.get(key);
     if (!s || !s.pid) return false;
+    s.cancelRequested = true;          // also stops a benchmark between iterations
     const side = new Client(this.clientConfig());
     await side.connect();
     try {
@@ -302,6 +304,93 @@ function shapeError(err, statement) {
   };
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Performance tools
+ * ------------------------------------------------------------------ */
+
+/**
+ * Does this statement only read?
+ *
+ * Used to decide whether a benchmark may simply run the thing N times. Leading
+ * comments are stripped first, and a CTE is only read-only if it contains no
+ * data-modifying branch -- `with x as (delete ... returning *) select ...` very
+ * much writes.
+ */
+function isReadOnlyStatement(sql) {
+  let s = String(sql || '');
+  // strip leading comments and whitespace
+  for (;;) {
+    const before = s;
+    s = s.replace(/^\s+/, '');
+    s = s.replace(/^--[^\n]*\n?/, '');
+    s = s.replace(/^\/\*[\s\S]*?\*\//, '');
+    if (s === before) break;
+  }
+  if (!/^(with|select|table|values|explain|show)\b/i.test(s)) return false;
+  if (/^with\b/i.test(s) && /\b(insert|update|delete|merge)\b/i.test(s)) return false;
+  return true;
+}
+
+
+/**
+ * EXPLAIN (FORMAT JSON) returns a json column, and this module deliberately
+ * hands json back as raw text so values round-trip losslessly — which means the
+ * plan arrives as a string and has to be parsed here.
+ */
+function parseExplainPayload(row) {
+  const raw = row['QUERY PLAN'];
+  const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return Array.isArray(arr) ? arr[0] : arr;
+}
+
+
+class Benchmark {
+  constructor(manager, conn, session, client) {
+    this.manager = manager;
+    this.conn = conn;
+    this.session = session;
+    this.client = client;
+  }
+
+  /** One timed execution. Writes go inside a transaction that is rolled back. */
+  async once(sql, rollback) {
+    if (rollback) await this.client.query('begin');
+    const t0 = process.hrtime.bigint();
+    let rowCount = null;
+    try {
+      const r = await this.client.query({ text: sql, rowMode: 'array' });
+      rowCount = Array.isArray(r) ? r[r.length - 1].rowCount : r.rowCount;
+      const list = Array.isArray(r) ? r : [r];
+      const last = list[list.length - 1];
+      if (last && Array.isArray(last.rows)) rowCount = last.rows.length || last.rowCount;
+    } finally {
+      if (rollback) { try { await this.client.query('rollback'); } catch { /* gone */ } }
+    }
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    return { ms, rowCount };
+  }
+
+  /** Server-side planning/execution split, measured once per variant. */
+  async plan(sql, rollback) {
+    const text = `explain (analyze, buffers, format json) ${sql}`;
+    if (rollback) await this.client.query('begin');
+    try {
+      const r = await this.client.query(text);
+      const root = parseExplainPayload(r.rows[0]);
+      return {
+        planningMs: root['Planning Time'] ?? null,
+        executionMs: root['Execution Time'] ?? null,
+        plan: root.Plan,
+      };
+    } catch {
+      return null;
+    } finally {
+      if (rollback) { try { await this.client.query('rollback'); } catch { /* gone */ } }
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 
 class Manager {
@@ -430,6 +519,149 @@ class Manager {
       }
       const shaped = await this.shape(conn, r, { sql: text, elapsedMs: Date.now() - began, maxRows });
       return { results: [{ ...shaped, baseSql, filtered: filters.length > 0 }] };
+    } finally {
+      session.busy = false;
+    }
+  }
+
+
+  /**
+   * Time several query variants against each other.
+   *
+   * Runs are interleaved (A, B, C, A, B, C, ...) rather than grouped, so a
+   * slow patch on the machine hits every variant roughly equally instead of
+   * landing entirely on whichever one happened to go first. Warmup runs are
+   * discarded, which keeps the first-read-from-disk cost out of the numbers.
+   */
+  async benchmark(id, tabKey, variants, {
+    runs = 10, warmups = 2, rollback = false, collectPlans = true, onProgress = null,
+  } = {}) {
+    if (!Array.isArray(variants) || !variants.length) throw new Error('Nothing to benchmark.');
+    runs = Math.max(1, Math.min(500, Number(runs) || 10));
+    warmups = Math.max(0, Math.min(50, Number(warmups) || 0));
+
+    const writes = variants.filter((v) => !isReadOnlyStatement(v.sql));
+    if (writes.length && !rollback) {
+      throw new Error(
+        `${writes.length === 1 ? 'One statement writes' : `${writes.length} statements write`} to the database. ` +
+        'Benchmarking would apply it repeatedly — enable "roll back each run" to measure it safely.'
+      );
+    }
+
+    const conn = this.get(id);
+    const session = conn.session(tabKey);
+    if (session.busy) throw new Error('This tab is already running a query.');
+    const client = await session.ensure();
+    session.busy = true;
+    session.cancelRequested = false;
+
+    const bench = new Benchmark(this, conn, session, client);
+    const state = variants.map((v, i) => ({
+      label: v.label || String.fromCharCode(65 + i),
+      sql: v.sql,
+      readOnly: isReadOnlyStatement(v.sql),
+      samples: [],
+      rowCount: null,
+      error: null,
+      plan: null,
+    }));
+
+    const began = Date.now();
+    let cancelled = false;
+    const report = (phase, done, total) => {
+      if (onProgress) { try { onProgress({ phase, done, total }); } catch { /* best effort */ } }
+    };
+
+    try {
+      const totalSteps = (warmups + runs) * state.length;
+      let step = 0;
+
+      for (let w = 0; w < warmups && !cancelled; w++) {
+        for (const v of state) {
+          if (v.error || session.cancelRequested) continue;
+          try { await bench.once(v.sql, rollback); }
+          catch (err) { v.error = shapeError(err, v.sql); }
+          report('warmup', ++step, totalSteps);
+        }
+      }
+
+      for (let i = 0; i < runs && !cancelled; i++) {
+        for (const v of state) {
+          if (session.cancelRequested) { cancelled = true; break; }
+          if (v.error) { step++; continue; }
+          try {
+            const { ms, rowCount } = await bench.once(v.sql, rollback);
+            v.samples.push(ms);
+            v.rowCount = rowCount;
+          } catch (err) {
+            v.error = shapeError(err, v.sql);
+          }
+          report('measure', ++step, totalSteps);
+        }
+      }
+
+      if (collectPlans && !cancelled) {
+        for (const v of state) {
+          if (v.error || !v.samples.length) continue;
+          v.plan = await bench.plan(v.sql, rollback);
+        }
+      }
+    } finally {
+      session.busy = false;
+      session.cancelRequested = false;
+    }
+
+    const measured = state.map((v) => ({ ...v, stats: summarize(v.samples) }));
+    return {
+      kind: 'benchmark',
+      variants: measured,
+      comparison: compare(measured),
+      opts: { runs, warmups, rollback, collectPlans },
+      cancelled,
+      elapsedMs: Date.now() - began,
+    };
+  }
+
+  /**
+   * EXPLAIN, optionally ANALYZE. Analyzing a write actually performs it, so
+   * those are wrapped in a transaction and rolled back.
+   */
+  async explain(id, tabKey, sql, { analyze = false } = {}) {
+    const conn = this.get(id);
+    const session = conn.session(tabKey);
+    if (session.busy) throw new Error('This tab is already running a query.');
+    const client = await session.ensure();
+    session.busy = true;
+
+    const readOnly = isReadOnlyStatement(sql);
+    const rollback = analyze && !readOnly;
+    const opts = ['format json', 'verbose', 'costs'];
+    if (analyze) opts.unshift('analyze', 'buffers');
+    const text = `explain (${opts.join(', ')}) ${sql}`;
+    const began = Date.now();
+
+    try {
+      if (rollback) await client.query('begin');
+      let r;
+      try {
+        r = await client.query(text);
+      } finally {
+        if (rollback) { try { await client.query('rollback'); } catch { /* gone */ } }
+      }
+      const root = parseExplainPayload(r.rows[0]);
+      return {
+        kind: 'plan',
+        sql,
+        analyze,
+        rolledBack: rollback,
+        planningMs: root['Planning Time'] ?? null,
+        executionMs: root['Execution Time'] ?? null,
+        triggers: root['Triggers'] || [],
+        plan: root.Plan,
+        elapsedMs: Date.now() - began,
+      };
+    } catch (err) {
+      return { kind: 'plan', sql, analyze, error: shapeError(err, text), elapsedMs: Date.now() - began };
     } finally {
       session.busy = false;
     }
@@ -640,4 +872,4 @@ class Manager {
   }
 }
 
-module.exports = { Manager, qid, qname, buildFilteredQuery, splitLimitTail, FILTER_OPS };
+module.exports = { Manager, qid, qname, buildFilteredQuery, splitLimitTail, FILTER_OPS, isReadOnlyStatement };

@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld('cobalt', {
     run: (id, tabKey, sql, opts) => call('query:run', id, tabKey, sql, opts),
     filter: (id, tabKey, baseSql, filters, opts) => call('query:filter', id, tabKey, baseSql, filters, opts),
     cancel: (id, tabKey) => call('query:cancel', id, tabKey),
+    benchmark: (id, tabKey, variants, opts) => call('perf:benchmark', id, tabKey, variants, opts),
+    explain: (id, tabKey, sql, opts) => call('perf:explain', id, tabKey, sql, opts),
+    onBenchProgress: (fn) => {
+      const listener = (_e, p) => fn(p);
+      ipcRenderer.on('perf:progress', listener);
+      return () => ipcRenderer.removeListener('perf:progress', listener);
+    },
     release: (id, tabKey) => call('query:release', id, tabKey),
     apply: (id, change) => call('grid:apply', id, change),
   },

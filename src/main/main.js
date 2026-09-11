@@ -145,6 +145,10 @@ function buildMenu() {
         { label: 'Run Whole Script', accelerator: 'CmdOrCtrl+Shift+Return', click: () => send('query:runAll') },
         { label: 'Cancel Running Query', accelerator: 'CmdOrCtrl+.', click: () => send('query:cancel') },
         { type: 'separator' },
+        { label: 'Explain', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('perf:explain') },
+        { label: 'Explain Analyze', accelerator: 'CmdOrCtrl+Alt+E', click: () => send('perf:explainAnalyze') },
+        { label: 'Benchmark Statements…', accelerator: 'CmdOrCtrl+Shift+B', click: () => send('perf:benchmark') },
+        { type: 'separator' },
         { label: 'Commit Grid Changes', accelerator: 'CmdOrCtrl+Shift+S', click: () => send('grid:commit') },
         { label: 'Discard Grid Changes', click: () => send('grid:discard') },
         { type: 'separator' },
@@ -246,6 +250,11 @@ handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table
 
 handle('query:run', (id, tabKey, sql, opts) => manager.run(id, tabKey, sql, opts || {}));
 handle('query:filter', (id, tabKey, baseSql, filters, opts) => manager.runFiltered(id, tabKey, baseSql, filters, opts || {}));
+handle('perf:benchmark', (id, tabKey, variants, opts) => manager.benchmark(id, tabKey, variants, {
+  ...(opts || {}),
+  onProgress: (p) => { if (win && !win.isDestroyed()) win.webContents.send('perf:progress', p); },
+}));
+handle('perf:explain', (id, tabKey, sql, opts) => manager.explain(id, tabKey, sql, opts || {}));
 handle('query:cancel', (id, tabKey) => manager.cancel(id, tabKey));
 handle('query:release', (id, tabKey) => manager.releaseTab(id, tabKey));
 handle('grid:apply', (id, change) => manager.applyChanges(id, change));

@@ -13,6 +13,22 @@
 
 const releases = [
   {
+    version: '0.6.0',
+    date: '2026-09-11',
+    title: 'Performance tools',
+    summary: 'Time two queries against each other, and see why one wins.',
+    changes: [
+      { type: 'added', text: 'Benchmark (Ctrl+Shift+B) times several statements against each other and reports median, min, p95, max and spread for each, with a bar chart whose lighter band is the interquartile range.' },
+      { type: 'added', text: 'Runs are interleaved (A, B, C, A, B, C...) rather than grouped, so a busy moment on the machine hits every variant instead of landing entirely on whichever went first. Warmup runs are discarded so first-read-from-disk cost stays out of the numbers.' },
+      { type: 'added', text: 'The verdict is conservative: a win is only declared when the p75 of the fastest variant still beats the p25 of the runner-up. Queries a few percent apart on a noisy laptop are reported as too close to call rather than crowned.' },
+      { type: 'added', text: 'Benchmarking a statement that writes is refused unless you turn on roll-back-each-run, so timing an INSERT ten times cannot leave ten rows behind.' },
+      { type: 'added', text: 'Explain (Ctrl+Shift+E) and Explain Analyze (Ctrl+Alt+E) draw the plan as a tree with self time per node, its share of execution, actual against estimated rows, cost and buffers. The slowest node by self time is flagged, and nodes whose row estimate is out by 10x or more are called out because that is usually why the planner chose the shape it did.' },
+      { type: 'added', text: 'EXPLAIN ANALYZE on a statement that writes runs inside a transaction that is rolled back; plain EXPLAIN never executes anything.' },
+      { type: 'added', text: 'Sequential scans over large tables and bad row estimates surface as plain-English hints above the tree.' },
+      { type: 'fixed', text: 'EXPLAIN (FORMAT JSON) output arrived as text, because this app deliberately keeps json columns as raw text for lossless round-trips. The plan is parsed explicitly now.' },
+    ],
+  },
+  {
     version: '0.5.1',
     date: '2026-09-11',
     title: 'Tab numbering',

@@ -209,6 +209,9 @@ export class SqlEditor {
 
   statementCount() { return splitStatements(this.view.state.doc.toString()).length; }
 
+  /** Split arbitrary text with the same rules the editor uses. */
+  splitStatements(text) { return splitStatements(text); }
+
   /** Move the caret to a byte-ish offset inside a statement (for error positions). */
   highlightError(start, offsetInStatement) {
     const pos = Math.min(start + Math.max(0, offsetInStatement - 1), this.view.state.doc.length);

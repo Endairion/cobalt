@@ -77,6 +77,20 @@ everywhere else:
 Filters across columns are ANDed. `Enter` applies, `Esc` clears the box then closes the
 row, and the toolbar shows how many are active with a Clear button.
 
+**Performance tools.** `Ctrl+Shift+B` benchmarks the statements in the tab (or the
+selection) against each other: median, min, p95, max and spread per variant, ranked,
+with the interquartile range drawn on each bar. Runs are interleaved rather than
+grouped so a busy moment hits every variant equally, and warmups are discarded. A win
+is only declared when the p75 of the fastest still beats the p25 of the runner-up —
+otherwise it says so rather than crowning noise. Benchmarking a statement that writes
+is refused unless you enable roll-back-each-run.
+
+`Ctrl+Shift+E` explains, `Ctrl+Alt+E` explains and analyzes. The plan is drawn as a
+tree with self time per node, its share of execution, actual against estimated rows,
+cost and buffers; the slowest node is flagged, and rows estimates out by 10x or more
+are called out because that is usually why the planner chose the shape it did. EXPLAIN
+ANALYZE on a write runs inside a transaction that is rolled back.
+
 **Errors.** Message, SQLSTATE, detail, hint, plus the offending line with a caret under
 the error position — and the editor caret jumps there.
 
@@ -106,6 +120,8 @@ Releases are tagged in git (`v0.1.0` …).
 | `Ctrl+R` | Refresh schema |
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
 | `Ctrl+Shift+F` | Toggle the filter row |
+| `Ctrl+Shift+B` | Benchmark statements |
+| `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
 | `Ctrl+Shift+S` | Commit grid changes |
 | `Ctrl+Shift+A` | Add row |
 | `Ctrl+Backspace` | Toggle row delete |
@@ -125,9 +141,13 @@ node test/version.test.js  # 10 checks: changelog data, CHANGELOG.md sync, git t
 node test/store.test.js    # 12 checks: ordering, duplication, password handling
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
+node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
 node test/manager.js      # multi-connection sidebar, manager dialog, tab rebinding
 node test/about.js        # version badge, About, What's New on upgrade
+node test/tabs.js         # tab naming and the close-button gesture
+node test/chrome.js       # frameless window controls, grid header geometry
+node test/perfui.js       # benchmark and plan panels
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -152,6 +172,7 @@ node test/inspect.js "query:run" "document.querySelectorAll('.grow').length"
 ```
 src/shared/
   changelog.js  release history as data; CHANGELOG.md is generated from it
+  stats.js      quantiles and the benchmark verdict rule
 src/main/
   main.js       window, menu, IPC surface, smoke mode
   db.js         pools, per-tab sessions, result metadata, transactional commits
@@ -161,6 +182,7 @@ src/renderer/
   app.js        state, sidebar, tabs, results, dialogs, palette
   connections.js  connection manager, row menu, tab connection picker
   about.js      About window and version history
+  perf.js       benchmark comparison and EXPLAIN plan tree
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   filter.js     filter expression parser
