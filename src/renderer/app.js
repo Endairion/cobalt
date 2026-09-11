@@ -1,6 +1,7 @@
 import { SqlEditor } from './editor.js';
 import { ResultGrid } from './grid.js';
 import * as connections from './connections.js';
+import * as about from './about.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -41,6 +42,7 @@ const state = {
   activeTabId: null,
   tabSeq: 0,
   filter: '',
+  appInfo: null,            // version + build details from the main process
   expandedConns: new Set(),   // savedIds whose subtree is folded open
 };
 
@@ -941,6 +943,24 @@ function renderConnPicker() {
 
 el.btnConn.addEventListener('click', () => connections.openConnectionPicker(el.btnConn));
 
+/* ------------------------- version & history ------------------------- */
+
+about.wire({
+  info: () => state.appInfo,
+  activeConnection: () => state.conns.get(state.activeConnId) || null,
+  showOverlay: (node) => showOverlay(node),
+  copy: (text) => api.ui.copy(text),
+  toast: (text) => toast(text),
+});
+
+function renderVersionBadge() {
+  if (!state.appInfo) return;
+  const badge = $('version-badge');
+  if (!badge) return;
+  badge.textContent = `v${state.appInfo.version}`;
+  badge.title = `Cobalt ${state.appInfo.version} - ${state.appInfo.releases[0].title}. Click for the version history.`;
+}
+
 /* ------------------------------ modals ------------------------------ */
 
 function showOverlay(node, { onClose } = {}) {
@@ -1176,6 +1196,8 @@ function openCommandPalette() {
     { label: 'New query tab', run: () => newTab() },
     { label: 'New connection…', run: () => openConnectionDialog(null) },
     { label: 'Manage connections…', run: () => openConnectionManager() },
+    { label: 'About Cobalt', sub: 'version & build', run: () => about.openAbout() },
+    { label: 'Version history', run: () => about.openChangelog() },
     { label: 'Switch this tab to another connection…', run: () => connections.openConnectionPicker(el.btnConn) },
     { label: 'Refresh schema', run: () => state.activeConnId && loadSchema(state.activeConnId) },
     { label: 'Run current statement', run: () => runScript(false) },
@@ -1306,6 +1328,9 @@ window.addEventListener('resize', () => {
 api.ui.onMenu((cmd) => {
   const tab = activeTab();
   switch (cmd) {
+    case 'help:about': about.openAbout(); break;
+    case 'help:changelog': about.openChangelog(); break;
+    case 'help:whatsnew': about.openWhatsNew(state.appInfo ? [state.appInfo.releases[0]] : []); break;
     case 'connection:new': openConnectionDialog(null); break;
     case 'connection:manage': openConnectionManager(); break;
     case 'connection:switch': connections.openConnectionPicker(el.btnConn); break;
@@ -1352,6 +1377,11 @@ async function boot() {
     },
   });
 
+  try {
+    state.appInfo = await api.app.info();
+    renderVersionBadge();
+  } catch { /* version panel simply stays blank */ }
+
   await refreshSaved();
   await restoreWorkspace();
 
@@ -1365,6 +1395,12 @@ async function boot() {
   editor.focus();
   // Readiness signal: connections restored, schema loaded, first paint done.
   document.body.dataset.ready = '1';
+
+  // First run of a build the user has not seen: show what changed, once.
+  try {
+    const unseen = await api.app.unseenReleases();
+    if (unseen.releases.length) about.openWhatsNew(unseen.releases, unseen.from);
+  } catch { /* never block startup on this */ }
 }
 
 /** Debug snapshot for the smoke harness (and for poking around in devtools). */
@@ -1384,3 +1420,6 @@ window.__cobalt = () => ({
 });
 
 boot();
+
+// The version badge opens the history.
+document.getElementById('version-badge').addEventListener('click', () => about.openChangelog());

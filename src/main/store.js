@@ -12,7 +12,7 @@ const { app, safeStorage } = require('electron');
 class Store {
   constructor(filename) {
     this.file = path.join(app.getPath('userData'), filename);
-    this.data = { connections: [], workspace: null };
+    this.data = { connections: [], workspace: null, seenVersion: null };
     this.load();
   }
 
@@ -21,7 +21,7 @@ class Store {
       const raw = fs.readFileSync(this.file, 'utf8');
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
-        this.data = { connections: [], workspace: null, ...parsed };
+        this.data = { connections: [], workspace: null, seenVersion: null, ...parsed };
       }
     } catch { /* first run, or unreadable — start clean */ }
   }
@@ -142,6 +142,14 @@ class Store {
       .slice()
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name))
       .forEach((c, i) => { c.order = i; });
+  }
+
+  getSeenVersion() { return this.data.seenVersion || null; }
+
+  setSeenVersion(v) {
+    if (this.data.seenVersion === v) return;
+    this.data.seenVersion = v;
+    this.save();
   }
 
   getWorkspace() { return this.data.workspace; }

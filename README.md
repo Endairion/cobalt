@@ -80,6 +80,14 @@ row, and the toolbar shows how many are active with a Clear button.
 **Errors.** Message, SQLSTATE, detail, hint, plus the offending line with a caret under
 the error position — and the editor caret jumps there.
 
+**Version history.** The changelog lives as data in `src/shared/changelog.js`. The app
+renders it under Help, and `npm run changelog` regenerates `CHANGELOG.md` from the same
+source, so the two cannot drift — `npm run changelog -- --check` fails the build if they
+have. Help → About shows the app version alongside the Electron/Chromium/Node/pg
+versions behind it and the server you are on. The first launch of a build you have not
+seen opens What's New once, listing only the releases after the version you were on.
+Releases are tagged in git (`v0.1.0` …).
+
 ## Keys
 
 | | |
@@ -93,6 +101,7 @@ the error position — and the editor caret jumps there.
 | `Ctrl+Shift+P` | Command palette |
 | `Ctrl+N` | New connection |
 | `Ctrl+Shift+O` | Manage connections |
+| — | Help → About / What's New / Version History |
 | `Ctrl+K` | Switch this tab's connection |
 | `Ctrl+R` | Refresh schema |
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
@@ -112,11 +121,13 @@ docker run -d --name cobalt-test-pg -e POSTGRES_PASSWORD=cobalt -e POSTGRES_USER
   -e POSTGRES_DB=cobalt -p 15432:5432 postgres:16-alpine
 docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
+node test/version.test.js  # 10 checks: changelog data, CHANGELOG.md sync, git tags
 node test/store.test.js    # 12 checks: ordering, duplication, password handling
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
 node test/manager.js      # multi-connection sidebar, manager dialog, tab rebinding
+node test/about.js        # version badge, About, What's New on upgrade
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -139,6 +150,8 @@ node test/inspect.js "query:run" "document.querySelectorAll('.grow').length"
 ## Layout
 
 ```
+src/shared/
+  changelog.js  release history as data; CHANGELOG.md is generated from it
 src/main/
   main.js       window, menu, IPC surface, smoke mode
   db.js         pools, per-tab sessions, result metadata, transactional commits
@@ -147,6 +160,7 @@ src/main/
 src/renderer/
   app.js        state, sidebar, tabs, results, dialogs, palette
   connections.js  connection manager, row menu, tab connection picker
+  about.js      About window and version history
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   filter.js     filter expression parser

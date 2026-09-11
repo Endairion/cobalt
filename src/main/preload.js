@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('cobalt', {
     release: (id, tabKey) => call('query:release', id, tabKey),
     apply: (id, change) => call('grid:apply', id, change),
   },
+  app: {
+    info: () => call('app:info'),
+    unseenReleases: () => call('app:unseenReleases'),
+  },
   workspace: {
     get: () => call('ws:get'),
     set: (ws) => call('ws:set', ws),

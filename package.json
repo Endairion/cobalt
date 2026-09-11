@@ -1,13 +1,15 @@
 {
   "name": "cobalt",
-  "version": "0.1.0",
-  "description": "Cobalt — a fast PostgreSQL editor",
+  "version": "0.4.0",
+  "description": "Cobalt - a fast PostgreSQL editor",
   "main": "src/main/main.js",
   "scripts": {
     "build": "esbuild src/renderer/app.js --bundle --outfile=src/renderer/bundle.js --format=iife --loader:.css=text",
     "watch": "esbuild src/renderer/app.js --bundle --outfile=src/renderer/bundle.js --format=iife --watch",
     "start": "npm run build && electron .",
-    "dev": "npm run build && electron . --dev"
+    "dev": "npm run build && electron . --dev",
+    "changelog": "node scripts/gen-changelog.js",
+    "test": "node test/store.test.js && node test/db.test.js && node test/filter.test.js"
   },
   "license": "MIT",
   "dependencies": {
