@@ -108,6 +108,8 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Connection…', accelerator: 'CmdOrCtrl+N', click: () => send('connection:new') },
+        { label: 'Manage Connections…', accelerator: 'CmdOrCtrl+Shift+O', click: () => send('connection:manage') },
+        { label: 'Switch Connection…', accelerator: 'CmdOrCtrl+K', click: () => send('connection:switch') },
         { label: 'New Query Tab', accelerator: 'CmdOrCtrl+T', click: () => send('tab:new') },
         { type: 'separator' },
         { label: 'Open SQL File…', accelerator: 'CmdOrCtrl+O', click: () => send('file:open') },
@@ -186,6 +188,8 @@ const handle = (channel, fn) => ipcMain.handle(channel, async (_e, ...args) => {
 handle('conn:list', () => store.list());
 handle('conn:save', (record) => store.upsert(record));
 handle('conn:delete', (id) => { store.remove(id); return true; });
+handle('conn:duplicate', (id) => store.duplicate(id));
+handle('conn:reorder', (ids) => store.reorder(ids));
 
 handle('conn:test', async (record) => {
   const cfg = { ...record };

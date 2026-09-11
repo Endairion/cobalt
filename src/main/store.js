@@ -50,12 +50,15 @@ class Store {
     return stored.plain || '';
   }
 
-  /** Connection records safe to send to the renderer. */
+  /** Connection records safe to send to the renderer, in display order. */
   list() {
-    return this.data.connections.map((c) => {
-      const { password, ...rest } = c;
-      return { ...rest, hasPassword: !!password };
-    });
+    return this.data.connections
+      .map((c, i) => ({ ...c, order: typeof c.order === 'number' ? c.order : i }))
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+      .map((c) => {
+        const { password, ...rest } = c;
+        return { ...rest, hasPassword: !!password };
+      });
   }
 
   find(id) {
@@ -82,7 +85,11 @@ class Store {
       user: record.user || '',
       ssl: record.ssl || 'disable',
       color: record.color || null,
+      group: (record.group || '').trim(),
       readOnly: !!record.readOnly,
+      order: typeof record.order === 'number'
+        ? record.order
+        : (existing && typeof existing.order === 'number' ? existing.order : this.data.connections.length),
       password: existing ? existing.password : null,
     };
     // An undefined password means "leave it alone"; '' means "clear it".
@@ -100,6 +107,43 @@ class Store {
     this.save();
   }
 
+  /** Copy a connection, password included, placed right after the original. */
+  duplicate(id) {
+    const src = this.find(id);
+    if (!src) throw new Error('Connection not found.');
+    const ordered = this.list();
+    const copy = {
+      ...src,
+      id: `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      name: nextCopyName(src.name, new Set(ordered.map((c) => c.name))),
+      order: (typeof src.order === 'number' ? src.order : 0) + 0.5,
+    };
+    this.data.connections.push(copy);
+    this.normalizeOrder();
+    this.save();
+    const { password, ...rest } = copy;
+    return { ...rest, hasPassword: !!copy.password };
+  }
+
+  /** Persist an explicit display order from a list of ids. */
+  reorder(ids) {
+    const pos = new Map(ids.map((id, i) => [id, i]));
+    for (const c of this.data.connections) {
+      if (pos.has(c.id)) c.order = pos.get(c.id);
+    }
+    this.normalizeOrder();
+    this.save();
+    return this.list();
+  }
+
+  /** Collapse fractional/duplicate order values back to 0..n-1. */
+  normalizeOrder() {
+    this.data.connections
+      .slice()
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name))
+      .forEach((c, i) => { c.order = i; });
+  }
+
   getWorkspace() { return this.data.workspace; }
 
   setWorkspace(ws) {
@@ -108,4 +152,14 @@ class Store {
   }
 }
 
-module.exports = { Store };
+/** "Local" -> "Local copy" -> "Local copy 2" … */
+function nextCopyName(name, taken) {
+  const base = /(.*) copy( \d+)?$/.exec(name);
+  const stem = base ? base[1] : name;
+  let candidate = `${stem} copy`;
+  let n = 2;
+  while (taken.has(candidate)) candidate = `${stem} copy ${n++}`;
+  return candidate;
+}
+
+module.exports = { Store, nextCopyName };
