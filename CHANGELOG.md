@@ -3,6 +3,17 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.5.1 — Tab numbering
+*2026-09-11*
+
+New tabs stop counting into the hundreds.
+
+### Changed
+- Tabs named after something else - a table, an opened .sql file - no longer consume a Query number.
+
+### Fixed
+- The tab label and the internal tab id shared one counter, so every close pushed the next "Query N" higher - and because closing the last tab opens a replacement, holding down the close button ran the number away. Twenty-five clicks left the next tab called "Query 27". Ids still never repeat; the label is now the lowest number not already on screen, so closing Query 2 frees that name.
+
 ## 0.5.0 — Frameless window
 *2026-09-11*
 

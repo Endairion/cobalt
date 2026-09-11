@@ -13,6 +13,16 @@
 
 const releases = [
   {
+    version: '0.5.1',
+    date: '2026-09-11',
+    title: 'Tab numbering',
+    summary: 'New tabs stop counting into the hundreds.',
+    changes: [
+      { type: 'fixed', text: 'The tab label and the internal tab id shared one counter, so every close pushed the next "Query N" higher - and because closing the last tab opens a replacement, holding down the close button ran the number away. Twenty-five clicks left the next tab called "Query 27". Ids still never repeat; the label is now the lowest number not already on screen, so closing Query 2 frees that name.' },
+      { type: 'changed', text: 'Tabs named after something else - a table, an opened .sql file - no longer consume a Query number.' },
+    ],
+  },
+  {
     version: '0.5.0',
     date: '2026-09-11',
     title: 'Frameless window',
