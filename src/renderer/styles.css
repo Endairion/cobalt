@@ -29,6 +29,10 @@
 
 * { box-sizing: border-box; }
 
+/* Author display rules beat the UA stylesheet, so [hidden] needs saying out
+   loud — without this the collapsed filter row still occupies its 26px. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -164,11 +168,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ------------------------------- tabs ------------------------------- */
 
-.tabstrip {
+.titlebar {
   display: flex; align-items: stretch;
-  height: 34px;
+  height: 36px;
   background: var(--bg-sunken);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.tabstrip {
+  display: flex; align-items: stretch;
+  flex: 1 1 auto; min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-app-region: drag;
@@ -707,3 +717,48 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 4px 12px 4px 0; white-space: nowrap; vertical-align: top;
 }
 .about-table td { padding: 4px 0; font-family: var(--mono); font-size: 11.5px; user-select: text; }
+
+
+/* --------------------------- window controls --------------------------- */
+
+.win-controls {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 6px 0 10px;
+  flex: none;
+}
+body.is-mac .win-controls { display: none; }        /* traffic lights instead */
+
+.win-btn {
+  width: 30px; height: 24px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 6px;
+  background: none; color: var(--text-faint);
+  cursor: pointer; padding: 0;
+  transition: background 90ms ease, color 90ms ease;
+}
+.win-btn svg { width: 10px; height: 10px; overflow: visible; }
+.win-btn svg path, .win-btn svg rect {
+  fill: none; stroke: currentColor; stroke-width: 1.15;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.win-btn:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.win-btn:active { background: rgba(255,255,255,.13); }
+.win-btn.danger:hover { background: var(--red); color: #fff; }
+
+/* the maximise button swaps glyph once the window is maximised */
+.win-btn .ico-restore { display: none; }
+body.is-maximized .win-btn .ico-max { display: none; }
+body.is-maximized .win-btn .ico-restore { display: block; }
+
+/* dim the chrome when the window loses focus, the way native apps do */
+body.is-blurred .titlebar { background: var(--bg); }
+body.is-blurred .win-btn { color: #4a5163; }
+body.is-blurred .tab.active { box-shadow: inset 0 2px 0 var(--border-strong); }
+
+/* macOS: leave room for the traffic lights above the sidebar */
+body.is-mac .sidebar-head { padding-left: 78px; }
+
+/* Windows 11 rounds frameless windows itself; keep our own corners flush so the
+   sidebar and grid do not poke past the rounding. */
+body:not(.is-maximized) .app { border-radius: 8px; overflow: hidden; }

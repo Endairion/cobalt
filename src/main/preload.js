@@ -31,6 +31,17 @@ contextBridge.exposeInMainWorld('cobalt', {
     release: (id, tabKey) => call('query:release', id, tabKey),
     apply: (id, change) => call('grid:apply', id, change),
   },
+  window: {
+    minimize: () => call('window:minimize'),
+    toggleMaximize: () => call('window:toggleMaximize'),
+    close: () => call('window:close'),
+    state: () => call('window:state'),
+    onState: (fn) => {
+      const listener = (_e, st) => fn(st);
+      ipcRenderer.on('window:state', listener);
+      return () => ipcRenderer.removeListener('window:state', listener);
+    },
+  },
   app: {
     info: () => call('app:info'),
     unseenReleases: () => call('app:unseenReleases'),

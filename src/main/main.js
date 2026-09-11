@@ -20,7 +20,10 @@ function createWindow() {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#14161c',
+    // macOS keeps its traffic lights (inset into our own chrome); everywhere else
+    // the window is frameless and draws its own controls in the tab strip.
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    frame: isMac,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -32,6 +35,19 @@ function createWindow() {
     },
   });
   win.once('ready-to-show', () => win.show());
+
+  const pushWindowState = () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('window:state', {
+      maximized: win.isMaximized(),
+      fullScreen: win.isFullScreen(),
+      focused: win.isFocused(),
+    });
+  };
+  for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'focus', 'blur']) {
+    win.on(ev, pushWindowState);
+  }
+  win.webContents.on('did-finish-load', pushWindowState);
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   if (process.argv.includes('--dev')) win.webContents.openDevTools({ mode: 'detach' });
 
@@ -233,6 +249,17 @@ handle('query:filter', (id, tabKey, baseSql, filters, opts) => manager.runFilter
 handle('query:cancel', (id, tabKey) => manager.cancel(id, tabKey));
 handle('query:release', (id, tabKey) => manager.releaseTab(id, tabKey));
 handle('grid:apply', (id, change) => manager.applyChanges(id, change));
+
+handle('window:minimize', () => { if (win) win.minimize(); return true; });
+handle('window:toggleMaximize', () => {
+  if (!win) return false;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+  return win.isMaximized();
+});
+handle('window:close', () => { if (win) win.close(); return true; });
+handle('window:state', () => (win ? {
+  maximized: win.isMaximized(), fullScreen: win.isFullScreen(), focused: win.isFocused(),
+} : null));
 
 handle('app:info', () => ({
   name: pkg.name,
