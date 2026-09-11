@@ -228,6 +228,68 @@ const qidNice = (s) => (/^[a-z_][a-z0-9_]*$/.test(s) && !RESERVED.has(s) ? s : q
 const qnameNice = (schema, table) => `${qidNice(schema)}.${qidNice(table)}`;
 const qname = (schema, table) => `${qid(schema)}.${qid(table)}`;
 
+/* ------------------------------------------------------------------ *
+ * Column filters
+ * ------------------------------------------------------------------ */
+
+/** Operators the renderer may ask for. Anything else is rejected outright. */
+const FILTER_OPS = new Map([
+  ['=', '='], ['!=', '<>'], ['<>', '<>'],
+  ['<', '<'], ['<=', '<='], ['>', '>'], ['>=', '>='],
+  ['like', 'like'], ['ilike', 'ilike'], ['not like', 'not like'], ['not ilike', 'not ilike'],
+  ['~', '~'], ['~*', '~*'], ['!~', '!~'], ['!~*', '!~*'],
+  ['in', 'in'], ['not in', 'not in'],
+  ['is null', 'is null'], ['is not null', 'is not null'],
+]);
+
+// Pattern and regex operators only exist for text, so cast the column first —
+// that is what lets you filter a timestamp or jsonb column by substring.
+const TEXT_OPS = new Set(['like', 'ilike', 'not like', 'not ilike', '~', '~*', '!~', '!~*']);
+const NO_VALUE_OPS = new Set(['is null', 'is not null']);
+
+/**
+ * Peel a trailing LIMIT/OFFSET off a statement so it can be re-applied outside
+ * the filter. Returns { inner, tail }.
+ */
+function splitLimitTail(sql) {
+  const s = sql.trim().replace(/;+\s*$/, '');
+  let m = /\s+limit\s+(\d+)(?:\s+offset\s+(\d+))?\s*$/i.exec(s);
+  if (m) return { inner: s.slice(0, m.index), tail: ` limit ${m[1]}${m[2] ? ` offset ${m[2]}` : ''}` };
+  m = /\s+offset\s+(\d+)(?:\s+limit\s+(\d+))?\s*$/i.exec(s);
+  if (m) return { inner: s.slice(0, m.index), tail: ` offset ${m[1]}${m[2] ? ` limit ${m[2]}` : ''}` };
+  return { inner: s, tail: '' };
+}
+
+function buildFilteredQuery(baseSql, filters = []) {
+  const { inner, tail } = splitLimitTail(baseSql);
+  const values = [];
+  const conds = [];
+
+  for (const f of filters) {
+    const op = FILTER_OPS.get(String(f.op || '').toLowerCase().replace(/\s+/g, ' ').trim());
+    if (!op) throw new Error(`Unsupported filter operator: ${f.op}`);
+    if (!f.name) throw new Error('Filter is missing a column name.');
+    const col = TEXT_OPS.has(op) ? `${qid(f.name)}::text` : qid(f.name);
+
+    if (NO_VALUE_OPS.has(op)) { conds.push(`${col} ${op}`); continue; }
+
+    if (op === 'in' || op === 'not in') {
+      const list = Array.isArray(f.values) ? f.values : [f.value];
+      if (!list.length) throw new Error(`The ${op.toUpperCase()} filter on "${f.name}" needs at least one value.`);
+      const ph = list.map((v) => { values.push(v); return `$${values.length}`; });
+      conds.push(`${col} ${op} (${ph.join(', ')})`);
+      continue;
+    }
+
+    values.push(f.value);
+    conds.push(`${col} ${op} $${values.length}`);
+  }
+
+  const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
+  const text = `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}${tail}`;
+  return { text, values };
+}
+
 function shapeError(err, statement) {
   return {
     message: err.message || String(err),
@@ -307,31 +369,67 @@ class Manager {
         }
         const list = Array.isArray(res) ? res : [res];
         for (const r of list) {
-          const hasRows = Array.isArray(r.fields) && r.fields.length > 0;
-          let meta = null;
-          if (hasRows) {
-            try { meta = await describeResult(conn.pool, r.fields); }
-            catch { meta = null; }
-          }
-          const rows = hasRows ? r.rows.slice(0, maxRows) : [];
-          results.push({
-            sql: st.sql,
-            start: st.start,
-            end: st.end,
-            command: r.command,
-            rowCount: r.rowCount,
-            elapsedMs: Date.now() - began,
-            truncated: hasRows && r.rows.length > maxRows,
-            columns: meta ? meta.columns : (r.fields || []).map((f, i) => ({ index: i, name: f.name, dataTypeID: f.dataTypeID })),
-            rows,
-            source: meta ? meta.source : null,
-            key: meta ? meta.key : null,
-            editable: meta ? meta.editable : false,
-            notEditableReason: meta ? meta.reason : 'No result metadata.',
-          });
+          results.push(await this.shape(conn, r, {
+            sql: st.sql, start: st.start, end: st.end, elapsedMs: Date.now() - began, maxRows,
+          }));
         }
       }
       return { results };
+    } finally {
+      session.busy = false;
+    }
+  }
+
+  /** Turn one pg result into the shape the renderer's grid consumes. */
+  async shape(conn, r, { sql, start = 0, end = 0, elapsedMs, maxRows }) {
+    const hasRows = Array.isArray(r.fields) && r.fields.length > 0;
+    let meta = null;
+    if (hasRows) {
+      try { meta = await describeResult(conn.pool, r.fields); }
+      catch { meta = null; }
+    }
+    const rows = hasRows ? r.rows.slice(0, maxRows) : [];
+    return {
+      sql, start, end,
+      command: r.command,
+      rowCount: r.rowCount,
+      elapsedMs,
+      truncated: hasRows && r.rows.length > maxRows,
+      columns: meta ? meta.columns : (r.fields || []).map((f, i) => ({ index: i, name: f.name, dataTypeID: f.dataTypeID })),
+      rows,
+      source: meta ? meta.source : null,
+      key: meta ? meta.key : null,
+      editable: meta ? meta.editable : false,
+      notEditableReason: meta ? meta.reason : 'No result metadata.',
+    };
+  }
+
+  /**
+   * Re-run a SELECT with column filters applied.
+   *
+   * The base query is wrapped in a subquery and the filter goes on the outside,
+   * with any trailing LIMIT/OFFSET hoisted out past it — so the filter runs
+   * against the whole table, not just the page that was already loaded.
+   * Postgres propagates each column's origin table through the wrapper, so the
+   * filtered result stays editable.
+   */
+  async runFiltered(id, tabKey, baseSql, filters, { maxRows = 10000 } = {}) {
+    const conn = this.get(id);
+    const session = conn.session(tabKey);
+    if (session.busy) throw new Error('This tab is already running a query.');
+    const client = await session.ensure();
+    session.busy = true;
+    const began = Date.now();
+    const { text, values } = buildFilteredQuery(baseSql, filters);
+    try {
+      let r;
+      try {
+        r = await client.query({ text, values, rowMode: 'array' });
+      } catch (err) {
+        return { results: [{ sql: text, baseSql, error: shapeError(err, text), elapsedMs: Date.now() - began }] };
+      }
+      const shaped = await this.shape(conn, r, { sql: text, elapsedMs: Date.now() - began, maxRows });
+      return { results: [{ ...shaped, baseSql, filtered: filters.length > 0 }] };
     } finally {
       session.busy = false;
     }
@@ -537,4 +635,4 @@ class Manager {
   }
 }
 
-module.exports = { Manager, qid, qname };
+module.exports = { Manager, qid, qname, buildFilteredQuery, splitLimitTail, FILTER_OPS };
