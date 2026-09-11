@@ -2,6 +2,7 @@ import { SqlEditor } from './editor.js';
 import { ResultGrid } from './grid.js';
 import * as connections from './connections.js';
 import * as about from './about.js';
+import * as perf from './perf.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -644,18 +645,117 @@ async function cancelQuery() {
   } catch (err) { toast(err.message, 'err'); }
 }
 
+/* -------------------------- performance tools -------------------------- */
+
+perf.wire({
+  showOverlay: (node) => showOverlay(node),
+  copy: (text) => api.ui.copy(text),
+  toast: (text) => toast(text),
+});
+
+/** Statements to benchmark: the selection if there is one, else the whole tab. */
+function benchmarkVariants() {
+  const state = editor.state;
+  const sel = state.selection.main;
+  const text = sel.from !== sel.to ? state.sliceDoc(sel.from, sel.to) : editor.getValue();
+  const stmts = splitForPerf(text);
+  return stmts.map((sql, i) => ({
+    label: String.fromCharCode(65 + i),
+    sql,
+    readOnly: /^\s*(--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*(with|select|table|values|explain|show)\b/i.test(sql)
+      && !(/^\s*with\b/i.test(sql.trim()) && /\b(insert|update|delete|merge)\b/i.test(sql)),
+  }));
+}
+
+function splitForPerf(text) {
+  return editor.splitStatements(text).map((s) => s.sql.trim().replace(/;+\s*$/, '')).filter(Boolean);
+}
+
+async function runBenchmark() {
+  const tab = activeTab();
+  if (!tab || !tab.connId || !state.conns.has(tab.connId)) {
+    toast('Attach this tab to a connection first.', 'err');
+    return;
+  }
+  if (tab.running) { toast('This tab is busy.'); return; }
+  const variants = benchmarkVariants();
+  if (!variants.length) { toast('Nothing to benchmark.'); return; }
+  if (variants.length === 1) {
+    toast('Benchmarking one statement — select two or more to compare them.');
+  }
+
+  perf.openBenchmarkDialog(variants, async (opts) => {
+    tab.running = true;
+    updateToolbar();
+    const started = Date.now();
+    const stop = api.query.onBenchProgress(({ phase, done, total }) => {
+      setStatus(`${phase === 'warmup' ? 'Warming up' : 'Benchmarking'}… ${done}/${total} · ${fmtMs(Date.now() - started)}`);
+    });
+    try {
+      const res = await api.query.benchmark(tab.connId, tab.id, variants, opts);
+      tab.results = [res];
+      tab.activeResult = 0;
+      renderResults();
+      const c = res.comparison;
+      setStatus(c.winner
+        ? `${c.winner.label} is ${c.ratio.toFixed(2)}x faster · ${fmtMs(res.elapsedMs)}`
+        : `No clear winner · ${fmtMs(res.elapsedMs)}`);
+    } catch (err) {
+      toast(err.message, 'err');
+      setStatus('');
+    } finally {
+      stop();
+      tab.running = false;
+      updateToolbar();
+    }
+  });
+}
+
+async function runExplain(analyze) {
+  const tab = activeTab();
+  if (!tab || !tab.connId || !state.conns.has(tab.connId)) {
+    toast('Attach this tab to a connection first.', 'err');
+    return;
+  }
+  if (tab.running) { toast('This tab is busy.'); return; }
+  const st = editor.currentStatement();
+  if (!st || !st.sql.trim()) { toast('Nothing to explain.'); return; }
+  const sql = st.sql.trim().replace(/;+\s*$/, '');
+
+  tab.running = true;
+  updateToolbar();
+  setStatus(analyze ? 'Running EXPLAIN ANALYZE…' : 'Planning…');
+  try {
+    const res = await api.query.explain(tab.connId, tab.id, sql, { analyze });
+    tab.results = [res];
+    tab.activeResult = 0;
+    renderResults();
+    setStatus(res.error ? '' : (analyze
+      ? `planning ${fmtMs(res.planningMs)} · execution ${fmtMs(res.executionMs)}`
+      : 'estimated plan — nothing was executed'));
+  } catch (err) {
+    toast(err.message, 'err');
+    setStatus('');
+  } finally {
+    tab.running = false;
+    updateToolbar();
+  }
+}
+
 /* ----------------------------- results ----------------------------- */
 
 function renderResults() {
   const tab = activeTab();
   // Hide every tab's grid, then show the active one.
   for (const t of state.tabs) if (t.grid) t.grid.el.style.display = 'none';
-  el.gridHost.querySelectorAll('.grid-empty, .error-box').forEach((n) => n.remove());
+  el.gridHost.querySelectorAll('.grid-empty, .error-box, .perf-box').forEach((n) => n.remove());
 
   if (!tab) { el.resultTabs.innerHTML = ''; el.gridToolbar.innerHTML = ''; return; }
 
   el.resultTabs.innerHTML = tab.results.map((r, i) => {
-    const label = r.error
+    const label = r.kind === 'benchmark' ? 'Benchmark'
+      : r.kind === 'plan' ? (r.analyze ? 'Plan (analyzed)' : 'Plan')
+      : r.error
       ? 'Error'
       : (r.rows && r.columns && r.columns.length
           ? `${fmtNum(r.rows.length)}${r.truncated ? '+' : ''} rows`
@@ -670,6 +770,17 @@ function renderResults() {
     empty.className = 'grid-empty';
     empty.innerHTML = '<div>Run a query to see results.</div><div style="opacity:.6">Ctrl+Enter runs the statement under the cursor · Ctrl+P opens a table</div>';
     el.gridHost.append(empty);
+    return;
+  }
+
+  if (res.kind === 'benchmark') {
+    el.gridToolbar.innerHTML = `<span class="pill">benchmark</span><span class="pill">${res.variants.length} variants</span><span class="pill">${res.opts.runs} runs each</span>`;
+    perf.renderBenchmark(el.gridHost, res);
+    return;
+  }
+  if (res.kind === 'plan') {
+    el.gridToolbar.innerHTML = `<span class="pill">${res.analyze ? 'explain analyze' : 'explain'}</span>`;
+    perf.renderPlan(el.gridHost, res);
     return;
   }
 
@@ -1222,6 +1333,9 @@ function openCommandPalette() {
     { label: 'Refresh schema', run: () => state.activeConnId && loadSchema(state.activeConnId) },
     { label: 'Run current statement', run: () => runScript(false) },
     { label: 'Run whole script', run: () => runScript(true) },
+    { label: 'Benchmark statements…', sub: 'compare timings', run: runBenchmark },
+    { label: 'Explain', run: () => runExplain(false) },
+    { label: 'Explain analyze', run: () => runExplain(true) },
     { label: 'Export result as CSV…', run: exportCsv },
     { label: 'Commit grid changes', run: commitGrid },
     { label: 'Open SQL file…', run: openFile },
@@ -1389,6 +1503,9 @@ api.ui.onMenu((cmd) => {
     case 'query:run': runScript(false); break;
     case 'query:runAll': runScript(true); break;
     case 'query:cancel': cancelQuery(); break;
+    case 'perf:benchmark': runBenchmark(); break;
+    case 'perf:explain': runExplain(false); break;
+    case 'perf:explainAnalyze': runExplain(true); break;
     case 'grid:commit': commitGrid(); break;
     case 'grid:discard': if (tab && tab.grid) { tab.grid.discard(); renderGridToolbar(); } break;
     case 'grid:addRow': if (tab && tab.grid) tab.grid.addRow(); break;
