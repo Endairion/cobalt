@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const { Manager } = require('./db');
 const { Store } = require('./store');
+const changelog = require('../shared/changelog');
+const pkg = require('../../package.json');
 
 const isMac = process.platform === 'darwin';
 const manager = new Manager();
@@ -161,6 +163,15 @@ function buildMenu() {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        { label: "What's New", click: () => send('help:whatsnew') },
+        { label: 'Version History', click: () => send('help:changelog') },
+        { type: 'separator' },
+        { label: `About ${pkg.name.charAt(0).toUpperCase()}${pkg.name.slice(1)}`, click: () => send('help:about') },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -222,6 +233,28 @@ handle('query:filter', (id, tabKey, baseSql, filters, opts) => manager.runFilter
 handle('query:cancel', (id, tabKey) => manager.cancel(id, tabKey));
 handle('query:release', (id, tabKey) => manager.releaseTab(id, tabKey));
 handle('grid:apply', (id, change) => manager.applyChanges(id, change));
+
+handle('app:info', () => ({
+  name: pkg.name,
+  version: pkg.version,
+  electron: process.versions.electron,
+  chrome: process.versions.chrome,
+  node: process.versions.node,
+  v8: process.versions.v8,
+  pg: (() => { try { return require('pg/package.json').version; } catch { return null; } })(),
+  platform: `${process.platform} ${process.arch}`,
+  releases: changelog.releases,
+}));
+
+/* The version whose notes have been seen, so a fresh build can show what changed
+   exactly once. Reading it also marks the current version as seen. */
+handle('app:unseenReleases', () => {
+  const seen = store.getSeenVersion();
+  store.setSeenVersion(pkg.version);
+  if (!seen) return { from: null, releases: [] };          // first run: no catch-up
+  if (changelog.compareVersions(seen, pkg.version) >= 0) return { from: seen, releases: [] };
+  return { from: seen, releases: changelog.since(seen) };
+});
 
 handle('ws:get', () => store.getWorkspace());
 handle('ws:set', (ws) => { store.setWorkspace(ws); return true; });
