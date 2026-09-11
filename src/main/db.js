@@ -3,6 +3,7 @@
 const { Pool, Client, types } = require('pg');
 const { splitStatements } = require('./sqlsplit');
 const { summarize, compare } = require('../shared/stats');
+const { isReadOnlyStatement } = require('../shared/sqlkind');
 
 /* ------------------------------------------------------------------ *
  * Type handling
@@ -262,12 +263,10 @@ function splitLimitTail(sql) {
   return { inner: s, tail: '' };
 }
 
-function buildFilteredQuery(baseSql, filters = []) {
-  const { inner, tail } = splitLimitTail(baseSql);
-  const values = [];
+/** Filter conditions, appending bound values to `values`. */
+function buildFilterConds(filters, values) {
   const conds = [];
-
-  for (const f of filters) {
+  for (const f of filters || []) {
     const op = FILTER_OPS.get(String(f.op || '').toLowerCase().replace(/\s+/g, ' ').trim());
     if (!op) throw new Error(`Unsupported filter operator: ${f.op}`);
     if (!f.name) throw new Error('Filter is missing a column name.');
@@ -286,10 +285,81 @@ function buildFilteredQuery(baseSql, filters = []) {
     values.push(f.value);
     conds.push(`${col} ${op} $${values.length}`);
   }
+  return conds;
+}
+
+/** Pull the numbers out of a trailing LIMIT/OFFSET so paging can work within them. */
+function parseLimitTail(baseSql) {
+  const { inner, tail } = splitLimitTail(baseSql);
+  const lim = /limit\s+(\d+)/i.exec(tail);
+  const off = /offset\s+(\d+)/i.exec(tail);
+  return {
+    inner,
+    baseLimit: lim ? Number(lim[1]) : null,
+    baseOffset: off ? Number(off[1]) : 0,
+  };
+}
+
+const orderClause = (sort) => sort.map((s) =>
+  `${qid(s.name)} ${String(s.dir).toLowerCase() === 'desc' ? 'desc' : 'asc'}`).join(', ');
+
+/**
+ * One page of a query, with filters and sorting pushed down to the server.
+ *
+ * `after` asks for keyset paging — `where (a, b) > ($1, $2)` — which stays fast
+ * however deep you go, unlike OFFSET which makes the server walk and discard
+ * every row before the page. It only works when every sort direction matches
+ * (a row constructor comparison has one direction) so the caller decides, and
+ * anything else falls back to OFFSET.
+ */
+function buildPagedQuery(baseSql, {
+  filters = [], sort = [], limit = null, offset = 0, after = null,
+} = {}) {
+  const { inner, baseLimit, baseOffset } = parseLimitTail(baseSql);
+  const values = [];
+  const conds = buildFilterConds(filters, values);
+  let strategy = 'offset';
+
+  if (after && after.length && sort.length === after.length) {
+    const dirs = new Set(sort.map((x) => String(x.dir).toLowerCase() === 'desc' ? 'desc' : 'asc'));
+    if (dirs.size === 1 && baseLimit == null) {
+      const cols = sort.map((x) => qid(x.name)).join(', ');
+      const ph = after.map((v) => { values.push(v); return `$${values.length}`; });
+      conds.push(`(${cols}) ${dirs.has('desc') ? '<' : '>'} (${ph.join(', ')})`);
+      strategy = 'keyset';
+    }
+  }
 
   const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
-  const text = `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}${tail}`;
-  return { text, values };
+  const order = sort.length ? `\norder by ${orderClause(sort)}` : '';
+
+  // The caller's own LIMIT caps the whole set; a page is served from inside it.
+  let pageLimit = limit;
+  let pageOffset = strategy === 'keyset' ? 0 : offset;
+  if (baseLimit != null) {
+    const remaining = Math.max(0, baseLimit - offset);
+    pageLimit = limit == null ? remaining : Math.min(limit, remaining);
+  }
+  if (baseOffset) pageOffset += baseOffset;
+
+  const tail = pageLimit == null ? ''
+    : `\nlimit ${Math.max(0, Math.floor(pageLimit))}${pageOffset ? ` offset ${Math.floor(pageOffset)}` : ''}`;
+
+  return {
+    text: `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}${order}${tail}`,
+    values,
+    strategy,
+    baseLimit,
+  };
+}
+
+/** Kept for callers that only filter. */
+function buildFilteredQuery(baseSql, filters = []) {
+  const { inner, tail } = splitLimitTail(baseSql);
+  const values = [];
+  const conds = buildFilterConds(filters, values);
+  const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
+  return { text: `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}${tail}`, values };
 }
 
 function shapeError(err, statement) {
@@ -309,28 +379,6 @@ function shapeError(err, statement) {
  * Performance tools
  * ------------------------------------------------------------------ */
 
-/**
- * Does this statement only read?
- *
- * Used to decide whether a benchmark may simply run the thing N times. Leading
- * comments are stripped first, and a CTE is only read-only if it contains no
- * data-modifying branch -- `with x as (delete ... returning *) select ...` very
- * much writes.
- */
-function isReadOnlyStatement(sql) {
-  let s = String(sql || '');
-  // strip leading comments and whitespace
-  for (;;) {
-    const before = s;
-    s = s.replace(/^\s+/, '');
-    s = s.replace(/^--[^\n]*\n?/, '');
-    s = s.replace(/^\/\*[\s\S]*?\*\//, '');
-    if (s === before) break;
-  }
-  if (!/^(with|select|table|values|explain|show)\b/i.test(s)) return false;
-  if (/^with\b/i.test(s) && /\b(insert|update|delete|merge)\b/i.test(s)) return false;
-  return true;
-}
 
 
 /**
@@ -667,6 +715,138 @@ class Manager {
     }
   }
 
+
+  /**
+   * Column metadata without running the query, so the first page can already
+   * carry a stable order. `limit 0` stops the Limit node before it pulls a
+   * single row from its child, so this costs a plan and nothing else.
+   */
+  async probeColumns(conn, client, baseSql) {
+    const { inner } = parseLimitTail(baseSql);
+    const r = await client.query({ text: `select * from (\n${inner}\n) as ${qid('_cobalt')} limit 0`, rowMode: 'array' });
+    return describeResult(conn.pool, r.fields || []);
+  }
+
+  /**
+   * One page of a result, with filters and sort applied by the server.
+   *
+   * Paging without a total order silently drops and repeats rows wherever the
+   * sort has ties, so when the result carries a unique key that key is appended
+   * to the sort as a tiebreaker. That also makes keyset paging safe, since the
+   * comparison then addresses exactly one row.
+   */
+  async runPaged(id, tabKey, baseSql, {
+    filters = [], sort = [], limit = 500, offset = 0, after = null, maxRows = 20000,
+  } = {}) {
+    const conn = this.get(id);
+    const session = conn.session(tabKey);
+    if (session.busy) throw new Error('This tab is already running a query.');
+    const client = await session.ensure();
+    session.busy = true;
+    const began = Date.now();
+    limit = Math.max(1, Math.min(maxRows, Number(limit) || 500));
+
+    try {
+      let meta = null;
+      try { meta = await this.probeColumns(conn, client, baseSql); }
+      catch { meta = null; }
+
+      // Append the unique key so the order is total and pages cannot overlap.
+      const byName = new Map();
+      for (const c of (meta ? meta.columns : [])) {
+        byName.set(c.name, (byName.get(c.name) || 0) + 1);
+      }
+      const keyNames = meta && meta.key
+        ? meta.key.map((i) => meta.columns[i].name).filter((n) => byName.get(n) === 1)
+        : [];
+      const effectiveSort = [...sort];
+      const sorted = new Set(sort.map((x) => x.name));
+      const tieDir = sort.length ? sort[sort.length - 1].dir : 'asc';
+      for (const n of keyNames) if (!sorted.has(n)) effectiveSort.push({ name: n, dir: tieDir });
+
+      // Keyset needs every sort column non-nullable: a NULL inside a row
+      // constructor comparison yields NULL, which silently drops rows.
+      const colByName = new Map((meta ? meta.columns : []).map((c) => [c.name, c]));
+      const keysetSafe = effectiveSort.length > 0
+        && keyNames.length > 0
+        && effectiveSort.every((x) => {
+          const c = colByName.get(x.name);
+          return c && c.notNull && byName.get(x.name) === 1;
+        })
+        && new Set(effectiveSort.map((x) => String(x.dir).toLowerCase())).size === 1;
+
+      const built = buildPagedQuery(baseSql, {
+        filters,
+        sort: effectiveSort,
+        limit: limit + 1,                      // one extra row answers "is there more?"
+        offset,
+        after: keysetSafe ? after : null,
+      });
+
+      let r;
+      try {
+        r = await client.query({ text: built.text, values: built.values, rowMode: 'array' });
+      } catch (err) {
+        return { results: [{ sql: built.text, baseSql, error: shapeError(err, built.text), elapsedMs: Date.now() - began }] };
+      }
+
+      const hasMore = r.rows.length > limit;
+      if (hasMore) r.rows.length = limit;
+
+      const shaped = await this.shape(conn, r, { sql: built.text, elapsedMs: Date.now() - began, maxRows: limit });
+      shaped.truncated = false;                // paging replaces the old hard cap
+
+      // Values the next keyset page starts after.
+      let nextAfter = null;
+      if (keysetSafe && hasMore && r.rows.length) {
+        const last = r.rows[r.rows.length - 1];
+        const idx = effectiveSort.map((x) => shaped.columns.findIndex((c) => c.name === x.name));
+        if (idx.every((i) => i >= 0)) nextAfter = idx.map((i) => last[i]);
+      }
+
+      return {
+        results: [{
+          ...shaped,
+          baseSql,
+          filtered: filters.length > 0,
+          page: {
+            limit,
+            offset,
+            hasMore,
+            strategy: built.strategy,
+            sort,
+            effectiveSort,
+            tiebreak: keyNames,
+            keysetSafe,
+            nextAfter,
+            baseLimit: built.baseLimit,
+            rows: r.rows.length,
+          },
+        }],
+      };
+    } finally {
+      session.busy = false;
+    }
+  }
+
+  /** Exact row count for the current query and filters. Can be slow, so it is asked for. */
+  async countRows(id, tabKey, baseSql, filters = []) {
+    const conn = this.get(id);
+    const session = conn.session(tabKey);
+    const client = await session.ensure();
+    const { inner, baseLimit, baseOffset } = parseLimitTail(baseSql);
+    const values = [];
+    const conds = buildFilterConds(filters, values);
+    const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
+    // A caller-supplied LIMIT bounds the count too, so honour it.
+    const bounded = baseLimit == null
+      ? `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}`
+      : `select * from (\n${inner}\n) as ${qid('_cobalt')}${where} limit ${baseLimit}${baseOffset ? ` offset ${baseOffset}` : ''}`;
+    const began = Date.now();
+    const r = await client.query({ text: `select count(*)::bigint as n from (\n${bounded}\n) as ${qid('_cobalt_count')}`, values });
+    return { count: Number(r.rows[0].n), elapsedMs: Date.now() - began };
+  }
+
   async cancel(id, tabKey) {
     return this.get(id).cancel(tabKey);
   }
@@ -872,4 +1052,7 @@ class Manager {
   }
 }
 
-module.exports = { Manager, qid, qname, buildFilteredQuery, splitLimitTail, FILTER_OPS, isReadOnlyStatement };
+module.exports = {
+  Manager, qid, qname, buildFilteredQuery, buildPagedQuery, parseLimitTail,
+  splitLimitTail, FILTER_OPS, isReadOnlyStatement,
+};

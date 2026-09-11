@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('cobalt', {
   query: {
     run: (id, tabKey, sql, opts) => call('query:run', id, tabKey, sql, opts),
     filter: (id, tabKey, baseSql, filters, opts) => call('query:filter', id, tabKey, baseSql, filters, opts),
+    page: (id, tabKey, baseSql, opts) => call('query:page', id, tabKey, baseSql, opts),
+    count: (id, tabKey, baseSql, filters) => call('query:count', id, tabKey, baseSql, filters),
     cancel: (id, tabKey) => call('query:cancel', id, tabKey),
     benchmark: (id, tabKey, variants, opts) => call('perf:benchmark', id, tabKey, variants, opts),
     explain: (id, tabKey, sql, opts) => call('perf:explain', id, tabKey, sql, opts),

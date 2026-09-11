@@ -3,6 +3,7 @@ import { ResultGrid } from './grid.js';
 import * as connections from './connections.js';
 import * as about from './about.js';
 import * as perf from './perf.js';
+import { isReadOnlyStatement } from '../shared/sqlkind.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -43,6 +44,7 @@ const state = {
   activeTabId: null,
   tabSeq: 0,
   filter: '',
+  pageSize: 500,
   appInfo: null,            // version + build details from the main process
   expandedConns: new Set(),   // savedIds whose subtree is folded open
 };
@@ -513,7 +515,7 @@ el.filter.addEventListener('input', () => {
 });
 
 function openTableTab(schema, name, connId) {
-  const sql = `select *\nfrom ${qrel(schema, name)}\nlimit 500;`;
+  const sql = `select *\nfrom ${qrel(schema, name)};`;
   newTab({ title: name, sql, run: true, kind: 'data', connId: connId || state.activeConnId });
 }
 
@@ -551,7 +553,20 @@ async function runScript(all) {
   }
   if (!sql.trim()) { toast('Nothing to run.'); return; }
 
+  // A single read-only statement goes through the pager, so sorting and
+  // scrolling reach the whole result rather than the first page of it.
+  const single = editor.splitStatements(sql).filter((x) => x.sql.trim());
+  if (single.length === 1 && isReadOnlyStatement(single[0].sql)) {
+    tab.pageState = newPageState(single[0].sql.trim().replace(/;+\s*$/, ''));
+    tab.filterBaseSql = null;
+    tab.running = true;
+    updateToolbar();
+    try { await loadPage(tab); } finally { tab.running = false; updateToolbar(); renderTabs(); }
+    return;
+  }
+
   tab.running = true;
+  tab.pageState = null;
   tab.filterBaseSql = null;          // a fresh run is the new filter base
   tab.runStarted = Date.now();
   updateToolbar();
@@ -742,6 +757,126 @@ async function runExplain(analyze) {
   }
 }
 
+/* ------------------------------ paging ------------------------------ */
+
+const PAGE_SIZES = [200, 500, 1000, 5000];
+
+function newPageState(baseSql) {
+  return {
+    baseSql,
+    filters: [],
+    sort: [],
+    limit: state.pageSize,
+    loaded: 0,
+    hasMore: false,
+    nextAfter: null,
+    total: null,          // filled in only when the count is asked for
+  };
+}
+
+/**
+ * Fetch a page of the active result.
+ *
+ * `append` continues from where the last page ended — by keyset when the server
+ * says that is safe, otherwise by offset. Anything else (a sort, a filter, a
+ * page-size change) restarts from the top, because the ordering changed.
+ */
+async function loadPage(tab, { append = false } = {}) {
+  const ps = tab.pageState;
+  if (!ps || !tab.connId || !state.conns.has(tab.connId)) return;
+
+  const opts = {
+    filters: ps.filters,
+    sort: ps.sort,
+    limit: ps.limit,
+    offset: append ? ps.loaded : 0,
+    after: append ? ps.nextAfter : null,
+  };
+
+  if (!append) setStatus('Running…');
+  try {
+    const { results } = await api.query.page(tab.connId, tab.id, ps.baseSql, opts);
+    const res = results[0];
+    if (res.error) {
+      if (append) { if (tab.grid) tab.grid.loadingMore = false; toast(res.error.message, 'err'); }
+      else { tab.results = [res]; tab.activeResult = 0; renderResults(); }
+      setStatus('');
+      return;
+    }
+
+    ps.hasMore = res.page.hasMore;
+    ps.nextAfter = res.page.nextAfter;
+
+    if (append && tab.grid) {
+      ps.loaded += res.rows.length;
+      tab.grid.load(res, { keepFilters: true, append: true });
+      tab.results[tab.activeResult] = { ...res, rows: tab.grid.rows };
+      renderGridToolbar();
+    } else {
+      ps.loaded = res.rows.length;
+      tab.results = [res];
+      tab.activeResult = 0;
+      tab.reloadingFilter = true;      // keep the filter boxes as typed
+      renderResults();
+      tab.reloadingFilter = false;
+    }
+    setStatus(pageStatus(tab));
+  } catch (err) {
+    if (tab.grid) tab.grid.loadingMore = false;
+    toast(err.message, 'err');
+    setStatus('');
+  }
+}
+
+function pageStatus(tab) {
+  const ps = tab.pageState;
+  if (!ps) return '';
+  const bits = [`${fmtNum(ps.loaded)}${ps.hasMore ? '+' : ''} rows`];
+  if (ps.total != null) bits.push(`of ${fmtNum(ps.total)}`);
+  if (ps.sort.length) bits.push(`sorted by ${ps.sort.map((x) => `${x.name} ${x.dir}`).join(', ')}`);
+  if (ps.filters.length) bits.push(`${ps.filters.length} filter${ps.filters.length > 1 ? 's' : ''}`);
+  return bits.join(' · ');
+}
+
+async function applySort(tab, sort) {
+  if (!tab.pageState) return;
+  if (tab.grid && tab.grid.dirtyCount()) {
+    const ok = await api.ui.confirm({
+      title: 'Uncommitted changes',
+      message: `Re-sorting discards ${tab.grid.changeSummary()}.`,
+      confirmLabel: 'Discard and sort',
+      destructive: true,
+    });
+    if (!ok) return;
+    tab.grid.discard();
+  }
+  tab.pageState.sort = sort;
+  await loadPage(tab);
+}
+
+async function countRows(tab) {
+  const ps = tab.pageState;
+  if (!ps) return;
+  setStatus('Counting…');
+  try {
+    const { count, elapsedMs } = await api.query.count(tab.connId, tab.id, ps.baseSql, ps.filters);
+    ps.total = count;
+    renderGridToolbar();
+    setStatus(`${fmtNum(count)} rows total · counted in ${fmtMs(elapsedMs)}`);
+  } catch (err) {
+    toast(err.message, 'err');
+    setStatus('');
+  }
+}
+
+async function setPageSize(tab, size) {
+  if (!tab.pageState) return;
+  state.pageSize = size;
+  tab.pageState.limit = size;
+  await loadPage(tab);
+  saveWorkspace();
+}
+
 /* ----------------------------- results ----------------------------- */
 
 function renderResults() {
@@ -803,7 +938,12 @@ function renderResults() {
     tab.grid = new ResultGrid(el.gridHost, {
       onDirtyChange: () => { renderGridToolbar(); renderTabs(); },
       onStatus: (s) => { el.statusRight.textContent = s; },
-      onFilter: (specs) => applyFilters(tab, specs),
+      onFilter: (specs) => {
+        if (tab.pageState) { tab.pageState.filters = specs; tab.pageState.total = null; loadPage(tab); }
+        else applyFilters(tab, specs);
+      },
+      onSort: (sort) => applySort(tab, sort),
+      onNeedMore: () => loadPage(tab, { append: true }),
       readOnly: !!(state.conns.get(tab.connId) || {}).readOnly,
     });
   }
@@ -819,7 +959,17 @@ function renderGridToolbar() {
   const g = tab.grid;
   const dirty = g ? g.dirtyCount() : 0;
   const bits = [];
-  bits.push(`<span class="pill">${fmtNum(res.rows.length)}${res.truncated ? '+ (capped)' : ''} rows</span>`);
+  const ps = tab.pageState;
+  const loaded = g ? g.rows.length : res.rows.length;
+  bits.push(ps
+    ? `<span class="pill" title="rows fetched so far">${fmtNum(loaded)}${ps.hasMore ? '+' : ''} rows${ps.total != null ? ` of ${fmtNum(ps.total)}` : ''}</span>`
+    : `<span class="pill">${fmtNum(res.rows.length)}${res.truncated ? '+ (capped)' : ''} rows</span>`);
+  if (ps && ps.hasMore && ps.total == null) {
+    bits.push('<button class="btn small ghost pill-btn" data-act="count" title="Run COUNT(*) over the whole result">count all</button>');
+  }
+  if (ps && res.page && res.page.strategy === 'keyset') {
+    bits.push('<span class="pill" title="Paging by key rather than OFFSET, so deep pages stay fast">keyset</span>');
+  }
   bits.push(`<span class="pill">${fmtMs(res.elapsedMs)}</span>`);
   if (res.source) bits.push(`<span class="pill">${esc(res.source.schema)}.${esc(res.source.table)}</span>`);
   // The connection flag outranks the result: a read-only connection must not
@@ -845,11 +995,26 @@ function renderGridToolbar() {
        <button class="btn small ghost" data-act="del">Delete row</button>
        <button class="btn small ${dirty ? 'primary' : ''}" data-act="commit" ${dirty ? '' : 'disabled'}>Commit${dirty ? ` (${g.changeSummary()})` : ''}</button>
        <button class="btn small ghost" data-act="discard" ${dirty ? '' : 'disabled'}>Discard</button>
-       <button class="btn small ghost" data-act="csv">CSV</button>`
-    : `<span class="spacer"></span>${filterBtn}<button class="btn small ghost" data-act="csv">CSV</button>`;
+       ${pageSizePicker(ps)}
+       <button class="btn small ghost" data-act="csv">${ps && ps.hasMore ? 'CSV (loaded)' : 'CSV'}</button>`
+    : `<span class="spacer"></span>${filterBtn}${pageSizePicker(ps)}<button class="btn small ghost" data-act="csv">${ps && ps.hasMore ? 'CSV (loaded)' : 'CSV'}</button>`;
 
   el.gridToolbar.innerHTML = bits.join('') + actions;
 }
+
+function pageSizePicker(ps) {
+  if (!ps) return '';
+  return `<select class="page-size" data-act="pagesize" title="Rows per page">
+    ${PAGE_SIZES.map((n) => `<option value="${n}"${n === ps.limit ? ' selected' : ''}>${n} / page</option>`).join('')}
+  </select>`;
+}
+
+el.gridToolbar.addEventListener('change', (e) => {
+  const sel = e.target.closest('[data-act="pagesize"]');
+  if (!sel) return;
+  const tab = activeTab();
+  if (tab) setPageSize(tab, Number(sel.value));
+});
 
 el.gridToolbar.addEventListener('click', (e) => {
   const act = e.target.closest('[data-act]');
@@ -862,6 +1027,7 @@ el.gridToolbar.addEventListener('click', (e) => {
     case 'commit': commitGrid(); break;
     case 'discard': tab.grid.discard(); renderGridToolbar(); break;
     case 'csv': exportCsv(); break;
+    case 'count': countRows(tab); break;
     case 'filter': tab.grid.toggleFilter(); renderGridToolbar(); break;
     case 'clearFilters': tab.grid.clearFilters(); renderGridToolbar(); break;
   }
@@ -1391,6 +1557,7 @@ function saveWorkspace() {
         savedId: (t.connId && state.conns.get(t.connId) ? state.conns.get(t.connId).savedId : t.savedId) || null,
       })),
       activeIndex: state.tabs.findIndex((t) => t.id === state.activeTabId),
+      pageSize: state.pageSize,
       sidebarWidth: getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w').trim(),
       editorHeight: getComputedStyle(document.documentElement).getPropertyValue('--editor-h').trim(),
     };
@@ -1401,6 +1568,7 @@ function saveWorkspace() {
 async function restoreWorkspace() {
   let ws = null;
   try { ws = await api.workspace.get(); } catch { /* first run */ }
+  if (ws && PAGE_SIZES.includes(ws.pageSize)) state.pageSize = ws.pageSize;
   if (ws && ws.sidebarWidth) document.documentElement.style.setProperty('--sidebar-w', ws.sidebarWidth);
   if (ws && ws.editorHeight) document.documentElement.style.setProperty('--editor-h', ws.editorHeight);
 
@@ -1569,6 +1737,16 @@ async function boot() {
     if (unseen.releases.length) about.openWhatsNew(unseen.releases, unseen.from);
   } catch { /* never block startup on this */ }
 }
+
+// Small read-only probes the UI tests drive the grid through.
+window.__cobaltGridRows = () => {
+  const t = activeTab();
+  return t && t.grid ? t.grid.rows.length : 0;
+};
+window.__cobaltCell = (row, col) => {
+  const t = activeTab();
+  return t && t.grid ? t.grid.valueAt(row, col) : null;
+};
 
 /** Debug snapshot for the smoke harness (and for poking around in devtools). */
 window.__cobalt = () => ({
