@@ -14,7 +14,9 @@ npm run dev        # same, with devtools and renderer console forwarding
 **Connections.** Saved in `userData/cobalt-connections.json`. Passwords are encrypted
 with the OS keychain (DPAPI on Windows, Keychain on macOS) via Electron's `safeStorage`
 and never travel to the renderer — it only ever sees a `hasPassword` flag. Mark a
-connection read-only to disable grid editing against production.
+connection read-only to disable grid editing against production — that flag is
+enforced in the main process, not just by hiding buttons, so a write is refused even
+if the renderer asks for one.
 
 **Query editor.** SQL syntax highlighting, autocomplete fed from the live schema
 (tables, and columns per table), bracket matching, multi-cursor, search, fold.
@@ -101,6 +103,14 @@ docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 node test/db.test.js       # 24 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
+```
+
+`test/realdb.js` points the data layer at a database you already have and reports what
+it found — schema load time, editability across every table, DDL generation, a wide
+read. It issues only SELECT and catalog queries:
+
+```bash
+node test/realdb.js 5432 mydb postgres
 ```
 
 `test/smoke.js` drives the app through `--smoke=out.png,cmd1,cmd2`, which waits for the

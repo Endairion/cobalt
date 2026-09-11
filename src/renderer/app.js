@@ -596,7 +596,15 @@ function renderGridToolbar() {
   bits.push(`<span class="pill">${fmtNum(res.rows.length)}${res.truncated ? '+ (capped)' : ''} rows</span>`);
   bits.push(`<span class="pill">${fmtMs(res.elapsedMs)}</span>`);
   if (res.source) bits.push(`<span class="pill">${esc(res.source.schema)}.${esc(res.source.table)}</span>`);
-  if (!res.editable) bits.push(`<span class="pill warn" title="${esc(res.notEditableReason || '')}">read-only</span>`);
+  // The connection flag outranks the result: a read-only connection must not
+  // advertise editing even when the result itself would support it.
+  const connReadOnly = !!(g && g.readOnly);
+  const canEdit = g ? g.editable : res.editable;
+  if (connReadOnly) {
+    bits.push('<span class="pill warn" title="This connection is marked read-only. Edit it in the connection settings to allow changes.">read-only connection</span>');
+  } else if (!res.editable) {
+    bits.push(`<span class="pill warn" title="${esc(res.notEditableReason || '')}">read-only</span>`);
+  }
   const nFilters = g ? g.activeFilters() : 0;
   if (nFilters) bits.push(`<span class="pill on">${nFilters} filter${nFilters > 1 ? 's' : ''}</span>`);
 
@@ -604,7 +612,7 @@ function renderGridToolbar() {
     `<button class="btn small ${g && g.filterVisible ? 'primary' : 'ghost'}" data-act="filter" title="Filter results (Ctrl+Shift+F)">Filter</button>` +
     (nFilters ? '<button class="btn small ghost" data-act="clearFilters">Clear</button>' : '');
 
-  const actions = res.editable
+  const actions = canEdit
     ? `<span class="spacer"></span>
        ${filterBtn}
        <button class="btn small ghost" data-act="add">+ Row</button>

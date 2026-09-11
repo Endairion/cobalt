@@ -453,6 +453,11 @@ class Manager {
    */
   async applyChanges(id, change) {
     const conn = this.get(id);
+    // Enforced here, not just in the UI: a connection the user marked read-only
+    // must refuse writes even if the renderer asks for them.
+    if (conn.config && conn.config.readOnly) {
+      throw new Error(`Connection "${conn.config.name || conn.id}" is marked read-only — no changes were applied.`);
+    }
     const client = await conn.pool.connect();
     const { source, columns, key } = change;
     const rel = qname(source.schema, source.table);
