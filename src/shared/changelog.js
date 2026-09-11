@@ -13,6 +13,21 @@
 
 const releases = [
   {
+    version: '0.7.0',
+    date: '2026-09-12',
+    title: 'Server-side paging and sorting',
+    summary: 'Results are no longer capped, and sorting reaches the whole table.',
+    changes: [
+      { type: 'changed', text: 'Results page in as you scroll instead of stopping at a hidden 10,000 row cap. The toolbar shows how many rows have been fetched, a plus when there are more, and a page size picker.' },
+      { type: 'changed', text: 'Clicking a column header sorts on the server, so the top row is the maximum in the table rather than the maximum of the rows already loaded. Clicking cycles ascending, descending, unsorted.' },
+      { type: 'added', text: 'Keyset paging: once the result carries a unique key and every sort column is non-nullable and sorted the same way, the next page is fetched with a row comparison rather than OFFSET, so deep pages stay fast. Anything else falls back to OFFSET, and the toolbar says which is in use.' },
+      { type: 'added', text: 'The unique key is appended to whatever you sorted by, making the order total. Without that, paging silently drops and repeats rows wherever the sort has ties.' },
+      { type: 'added', text: 'A count-all button runs COUNT(*) over the whole filtered result, on request rather than automatically, since it can be slow.' },
+      { type: 'changed', text: 'Opening a table from the sidebar no longer appends LIMIT 500 - paging governs instead, so you can browse the whole thing. A LIMIT you write yourself still caps the set, and pages are served inside it.' },
+      { type: 'changed', text: 'The CSV button says "CSV (loaded)" while more rows remain, because it exports what has been fetched.' },
+    ],
+  },
+  {
     version: '0.6.0',
     date: '2026-09-11',
     title: 'Performance tools',

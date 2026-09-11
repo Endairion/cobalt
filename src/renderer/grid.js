@@ -31,11 +31,14 @@ function textWidth(s, font) {
 const NULL_TOKEN = Symbol('null');
 
 export class ResultGrid {
-  constructor(host, { onDirtyChange, onStatus, onFilter, readOnly = false } = {}) {
+  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, readOnly = false } = {}) {
     this.host = host;
     this.onDirtyChange = onDirtyChange || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onFilter = onFilter || (() => {});
+    this.onSort = onSort || (() => {});
+    this.onNeedMore = onNeedMore || (() => {});
+    this.loadingMore = false;
     this.readOnly = readOnly;
     this.filterVisible = false;
     this.filterText = new Map();   // colIndex -> raw text the user typed
@@ -72,7 +75,10 @@ export class ResultGrid {
     this.el.append(this.inner);
     host.append(this.el);
 
-    this.el.addEventListener('scroll', () => this.renderRows());
+    this.el.addEventListener('scroll', () => {
+      this.renderRows();
+      this.maybeLoadMore();
+    });
     this.el.addEventListener('mousedown', (e) => this.onMouseDown(e));
     this.el.addEventListener('dblclick', (e) => this.onDoubleClick(e));
     this.el.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -175,22 +181,50 @@ export class ResultGrid {
 
   /* ----------------------------- data ----------------------------- */
 
-  load(result, { keepFilters = false } = {}) {
+  load(result, { keepFilters = false, append = false } = {}) {
+    // Appending the next page must not disturb what is already on screen: the
+    // staged edits are keyed by row index, and those indices stay valid.
+    if (append) {
+      const start = this.rows.length;
+      const incoming = result.rows || [];
+      this.rows = this.rows.concat(incoming);
+      for (let i = 0; i < incoming.length; i++) this.order.push(start + i);
+      this.result = { ...result, rows: this.rows };
+      this.loadingMore = false;
+      this.render();
+      return;
+    }
+
     if (!keepFilters) { this.filterText.clear(); this.filterError.clear(); }
     this.result = result;
     this.columns = result.columns || [];
     this.rows = result.rows || [];
     this.order = this.rows.map((_, i) => i);
-    this.sort = null;
+    // Sorting is the server's job now; this just mirrors what it was asked for.
+    this.sort = result.page && result.page.sort && result.page.sort.length
+      ? { name: result.page.sort[0].name, dir: result.page.sort[0].dir }
+      : null;
+    this.loadingMore = false;
     this.edits.clear();
     this.deletes.clear();
     this.inserts = [];
     this.cursor = { row: 0, col: 0 };
-    // Keep column widths steady across a filter re-run, so the grid doesn't
-    // reflow under the cursor every time you type a filter.
+    // Keep column widths steady across a re-run, so the grid doesn't reflow
+    // under the cursor every time you sort or type a filter.
     if (!keepFilters || !this.widths.length || this.widths.length !== this.columns.length) this.autoSize();
     this.render();
     this.onDirtyChange(this.dirtyCount());
+  }
+
+  get hasMore() { return !!(this.result && this.result.page && this.result.page.hasMore); }
+
+  /** Ask for the next page once the viewport is within a few rows of the end. */
+  maybeLoadMore() {
+    if (!this.hasMore || this.loadingMore || this.editing) return;
+    const remaining = this.el.scrollHeight - (this.el.scrollTop + this.el.clientHeight);
+    if (remaining > ROW_H * 12) return;
+    this.loadingMore = true;
+    this.onNeedMore();
   }
 
   get editable() {
@@ -276,7 +310,7 @@ export class ResultGrid {
     const parts = [`<div class="gh rownum" style="width:${NUM_W}px">#</div>`];
     this.columns.forEach((c, i) => {
       const pk = this.result && this.result.key && this.result.key.includes(i);
-      const arrow = this.sort && this.sort.col === i ? (this.sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+      const arrow = this.sort && this.sort.name === c.name ? (this.sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
       parts.push(
         `<div class="gh" data-col="${i}" style="width:${this.widths[i]}px" title="${esc(c.name)}${c.dataType ? ' · ' + esc(c.dataType) : ''}">` +
         (pk ? '<span class="gh-pk">PK</span>' : '') +
@@ -348,30 +382,25 @@ export class ResultGrid {
     window.addEventListener('mouseup', up);
   }
 
+  /**
+   * Clicking a header cycles ascending, descending, unsorted — and asks the
+   * server to re-run with that ORDER BY. Sorting only the rows already fetched
+   * would be a lie the moment the result has more than one page.
+   */
   onHeadClick(e) {
     if (e.target.closest('[data-resize]')) return;
     const gh = e.target.closest('.gh[data-col]');
     if (!gh) return;
     const col = Number(gh.dataset.col);
-    if (this.dirtyCount()) { this.onStatus('Commit or discard changes before sorting.'); return; }
-    const dir = this.sort && this.sort.col === col && this.sort.dir === 'asc' ? 'desc' : 'asc';
-    this.sortBy(col, dir);
-  }
-
-  sortBy(col, dir) {
-    const mul = dir === 'asc' ? 1 : -1;
-    const numeric = NUMERIC_OIDS.has(this.columns[col].dataTypeID);
-    this.order = this.rows.map((_, i) => i).sort((a, b) => {
-      const av = this.rows[a][col];
-      const bv = this.rows[b][col];
-      if (av === null && bv === null) return 0;
-      if (av === null) return 1;
-      if (bv === null) return -1;
-      if (numeric) return (Number(av) - Number(bv)) * mul;
-      return String(av).localeCompare(String(bv)) * mul;
-    });
-    this.sort = { col, dir };
-    this.render();
+    const column = this.columns[col];
+    if (!column) return;
+    if (this.ambiguous(column.name)) {
+      this.onStatus(`"${column.name}" appears more than once in this result, so it can't be sorted unambiguously.`);
+      return;
+    }
+    const current = this.sort && this.sort.name === column.name ? this.sort.dir : null;
+    const next = current === 'asc' ? 'desc' : current === 'desc' ? null : 'asc';
+    this.onSort(next ? [{ name: column.name, dir: next }] : []);
   }
 
   onMouseDown(e) {

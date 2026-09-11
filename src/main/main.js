@@ -249,6 +249,8 @@ handle('conn:ddl', (id, schema, table) => manager.tableDdl(id, schema, table));
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));
 
 handle('query:run', (id, tabKey, sql, opts) => manager.run(id, tabKey, sql, opts || {}));
+handle('query:page', (id, tabKey, baseSql, opts) => manager.runPaged(id, tabKey, baseSql, opts || {}));
+handle('query:count', (id, tabKey, baseSql, filters) => manager.countRows(id, tabKey, baseSql, filters || []));
 handle('query:filter', (id, tabKey, baseSql, filters, opts) => manager.runFiltered(id, tabKey, baseSql, filters, opts || {}));
 handle('perf:benchmark', (id, tabKey, variants, opts) => manager.benchmark(id, tabKey, variants, {
   ...(opts || {}),
