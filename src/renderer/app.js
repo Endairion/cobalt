@@ -1,5 +1,6 @@
 import { SqlEditor } from './editor.js';
 import { ResultGrid } from './grid.js';
+import * as connections from './connections.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -27,6 +28,7 @@ const el = {
   btnRunAll: $('btn-run-all'),
   btnCancel: $('btn-cancel'),
   btnNewConn: $('btn-new-connection'),
+  btnConn: $('btn-conn'),
 };
 
 /* ------------------------------ state ------------------------------ */
@@ -39,6 +41,7 @@ const state = {
   activeTabId: null,
   tabSeq: 0,
   filter: '',
+  expandedConns: new Set(),   // savedIds whose subtree is folded open
 };
 
 let editor = null;
@@ -112,7 +115,7 @@ function selectTab(id) {
     if (tab.connId && state.conns.has(tab.connId)) state.activeConnId = tab.connId;
   }
   renderTabs();
-  renderConnBar();
+  renderSidebar();
   renderResults();
   updateToolbar();
   renderStatus();
@@ -163,10 +166,12 @@ function cycleTab(delta) {
 function renderTabs() {
   const parts = state.tabs.map((t) => {
     const conn = t.connId ? state.conns.get(t.connId) : null;
+    const saved = conn ? state.saved.find((x) => x.id === conn.savedId) : null;
     const dirty = t.grid && t.grid.dirtyCount() ? '<span class="t-dirty"></span>' : '';
-    const label = conn ? `${t.title}` : `${t.title}`;
+    const stripe = saved && saved.color
+      ? `<span class="t-color" style="background:${esc(saved.color)}"></span>` : '';
     return `<div class="tab${t.id === state.activeTabId ? ' active' : ''}" data-tab="${t.id}" title="${esc(conn ? conn.name + ' · ' + conn.database : 'No connection')}">
-      ${dirty}<span class="t-label">${esc(label)}</span>
+      ${stripe}${dirty}<span class="t-label">${esc(t.title)}</span>
       <button class="t-close" data-close="${t.id}">×</button>
     </div>`;
   });
@@ -190,47 +195,48 @@ async function refreshSaved() {
 }
 
 function renderConnBar() {
-  const live = [...state.conns.values()];
-  const liveBySaved = new Map(live.map((c) => [c.savedId, c]));
-  const rows = state.saved.map((s) => {
-    const l = liveBySaved.get(s.id);
-    const active = l && l.id === state.activeConnId;
-    return `<div class="conn-chip${l ? ' live' : ''}${active ? ' active' : ''}" data-saved="${s.id}" title="${esc(s.user ? s.user + '@' : '')}${esc(s.host)}:${s.port}/${esc(s.database)}">
-      <span class="dot"></span>
-      <span class="label">${esc(s.name)}</span>
-      ${l ? `<span class="sub">${esc(l.database)}</span>` : ''}
-      <button class="chip-x" data-edit="${s.id}" title="Edit">⋯</button>
-    </div>`;
-  });
-  if (!rows.length) {
-    rows.push('<div class="conn-chip" data-new="1"><span class="dot"></span><span class="label">Add a connection…</span></div>');
-  }
-  el.connBar.innerHTML = rows.join('');
+  const n = state.saved.length;
+  const open = state.conns.size;
+  el.connBar.innerHTML =
+    `<div class="conn-head">
+       <span class="conn-head-label">Connections${n ? ` · ${open}/${n} open` : ''}</span>
+       <button class="mini-btn" data-manage="1" title="Manage connections (Ctrl+Shift+O)">Manage</button>
+     </div>`;
 }
 
-el.connBar.addEventListener('click', async (e) => {
-  if (e.target.closest('[data-new]')) { openConnectionDialog(null); return; }
-  const edit = e.target.closest('[data-edit]');
-  if (edit) {
-    e.stopPropagation();
-    openConnectionDialog(state.saved.find((s) => s.id === edit.dataset.edit));
-    return;
-  }
-  const chip = e.target.closest('[data-saved]');
-  if (!chip) return;
-  const savedId = chip.dataset.saved;
-  const existing = [...state.conns.values()].find((c) => c.savedId === savedId);
-  if (existing) {
-    state.activeConnId = existing.id;
-    const t = activeTab();
-    if (t && !t.connId) t.connId = existing.id;
-    renderConnBar();
-    renderTree();
-    renderStatus();
-  } else {
-    await connect(savedId);
-  }
+el.connBar.addEventListener('click', (e) => {
+  if (e.target.closest('[data-manage]')) openConnectionManager();
 });
+
+/** The live connection for a saved record, if it is currently open. */
+function liveFor(savedId) {
+  return [...state.conns.values()].find((c) => c.savedId === savedId) || null;
+}
+
+/** Make `connId` the active connection and bind the current tab to it. */
+function focusConnection(connId, { bindTab = true } = {}) {
+  if (!state.conns.has(connId)) return;
+  state.activeConnId = connId;
+  const t = activeTab();
+  if (t && bindTab && t.connId !== connId) bindTabToConnection(t, connId);
+  const conn = state.conns.get(connId);
+  if (conn && conn.tree) editor.setSchema(conn.tree);
+  renderSidebar();
+  renderTabs();
+  renderStatus();
+  updateToolbar();
+}
+
+/** Point a tab at a different connection, releasing its old backend session. */
+function bindTabToConnection(tab, connId) {
+  if (tab.connId === connId) return;
+  if (tab.connId) api.query.release(tab.connId, tab.id).catch(() => {});
+  tab.connId = connId;
+  const conn = state.conns.get(connId);
+  tab.savedId = conn ? conn.savedId : null;
+  tab.filterBaseSql = null;
+  saveWorkspace();
+}
 
 async function connect(savedId, overrides) {
   const saved = state.saved.find((s) => s.id === savedId);
@@ -248,9 +254,13 @@ async function connect(savedId, overrides) {
       expanded: new Set(),
     });
     state.activeConnId = info.id;
+    state.expandedConns.add(savedId);
+    for (const t of state.tabs) {
+      if (!t.connId && t.savedId === savedId) t.connId = info.id;
+    }
     const t = activeTab();
     if (t && !t.connId) t.connId = info.id;
-    renderConnBar();
+    renderSidebar();
     await loadSchema(info.id);
     toast(`Connected to ${info.name} · PostgreSQL ${info.serverVersion}`, 'ok');
     updateToolbar();
@@ -272,11 +282,12 @@ async function disconnect(connId) {
   if (!conn) return;
   for (const t of state.tabs) if (t.connId === connId) t.connId = null;
   state.conns.delete(connId);
+  state.expandedConns.delete(conn.savedId);
   if (state.activeConnId === connId) state.activeConnId = [...state.conns.keys()][0] || null;
   await api.connections.close(connId).catch(() => {});
-  renderConnBar();
-  renderTree();
+  renderSidebar();
   renderStatus();
+  updateToolbar();
 }
 
 async function loadSchema(connId) {
@@ -290,7 +301,7 @@ async function loadSchema(connId) {
       const pub = tree.schemas.find((s) => s.name === 'public') || tree.schemas[0];
       if (pub) conn.expanded.add(`schema:${pub.name}`);
     }
-    renderTree();
+    renderSidebar();
     if (connId === state.activeConnId) editor.setSchema(tree);
     setStatus('');
   } catch (err) {
@@ -301,56 +312,93 @@ async function loadSchema(connId) {
 
 /* ------------------------------- tree ------------------------------- */
 
-function renderTree() {
-  const conn = state.conns.get(state.activeConnId);
-  if (!conn || !conn.tree) {
-    el.tree.innerHTML = '<div class="sidebar-foot" style="border:0">No connection. Click + to add one.</div>';
+/**
+ * One tree rooted at every saved connection, so several can be open and
+ * expanded side by side and you can jump between them without disconnecting.
+ */
+function renderSidebar() {
+  renderConnBar();
+  const needle = state.filter.trim().toLowerCase();
+  const out = [];
+  let shownTotal = 0;
+
+  if (!state.saved.length) {
+    el.tree.innerHTML = '<div class="tree-empty">No connections yet.<br><button class="btn small" data-newconn="1">Add one</button></div>';
     el.sidebarFoot.textContent = '';
     return;
   }
-  const needle = state.filter.trim().toLowerCase();
-  const out = [];
-  let shown = 0;
 
-  for (const s of conn.tree.schemas) {
-    const relations = needle
-      ? s.relations.filter((r) =>
-          r.name.toLowerCase().includes(needle) ||
-          r.columns.some((c) => c.name.toLowerCase().includes(needle)))
-      : s.relations;
-    if (needle && !relations.length) continue;
+  let lastGroup = null;
+  for (const saved of state.saved) {
+    const group = (saved.group || '').trim();
+    if (group !== lastGroup) {
+      if (group) out.push(`<div class="tree-group-label">${esc(group)}</div>`);
+      lastGroup = group;
+    }
 
-    const key = `schema:${s.name}`;
-    const open = needle ? true : conn.expanded.has(key);
-    out.push(`<div class="tree-row schema" data-toggle="${esc(key)}">
-      <span class="twisty">${open ? '▾' : '▸'}</span>
-      <span class="name">${esc(s.name)}</span>
-      <span class="meta">${relations.length}</span>
+    const live = liveFor(saved.id);
+    const isActive = live && live.id === state.activeConnId;
+    const open = live && state.expandedConns.has(saved.id);
+    const colorBar = saved.color ? `<span class="conn-color" style="background:${esc(saved.color)}"></span>` : '';
+
+    out.push(`<div class="tree-row conn${live ? ' live' : ''}${isActive ? ' active' : ''}" data-conn="${esc(saved.id)}"
+        title="${esc(saved.user ? saved.user + '@' : '')}${esc(saved.host)}:${saved.port}/${esc(saved.database)}${saved.readOnly ? ' · read-only' : ''}">
+      ${colorBar}
+      <span class="twisty">${live ? (open ? '&#9662;' : '&#9656;') : ''}</span>
+      <span class="dot"></span>
+      <span class="name">${esc(saved.name)}</span>
+      ${saved.readOnly ? '<span class="ro-flag" title="read-only">RO</span>' : ''}
+      <span class="meta">${live ? esc(live.database) : ''}</span>
+      <button class="row-btn" data-connmenu="${esc(saved.id)}" title="Connection actions">&#8943;</button>
     </div>`);
-    if (!open) continue;
 
-    for (const r of relations) {
-      shown++;
-      const ckey = `rel:${s.name}.${r.name}`;
-      const copen = conn.expanded.has(ckey);
-      out.push(`<div class="tree-row rel" data-rel="${esc(s.name)}|${esc(r.name)}" data-toggle="${esc(ckey)}" title="${esc(s.name)}.${esc(r.name)}">
-        <span class="twisty">${copen ? '▾' : '▸'}</span>
-        <span class="kind ${r.kind}">${kindLabel(r.kind)}</span>
-        <span class="name">${esc(r.name)}</span>
-        <span class="meta">${r.estRows > 0 ? approx(r.estRows) : ''}</span>
+    if (!open || !live) continue;
+    if (!live.tree) { out.push('<div class="tree-row loading">loading schema...</div>'); continue; }
+
+    for (const sch of live.tree.schemas) {
+      const relations = needle
+        ? sch.relations.filter((r) =>
+            r.name.toLowerCase().includes(needle) ||
+            r.columns.some((c) => c.name.toLowerCase().includes(needle)))
+        : sch.relations;
+      if (needle && !relations.length) continue;
+
+      const key = `schema:${sch.name}`;
+      const sopen = needle ? true : live.expanded.has(key);
+      out.push(`<div class="tree-row schema" data-conn-scope="${esc(live.id)}" data-toggle="${esc(key)}">
+        <span class="twisty">${sopen ? '&#9662;' : '&#9656;'}</span>
+        <span class="name">${esc(sch.name)}</span>
+        <span class="meta">${relations.length}</span>
       </div>`);
-      if (copen) {
-        for (const c of r.columns) {
-          out.push(`<div class="tree-row column" data-col="${esc(c.name)}" title="${esc(c.name)} ${esc(c.type)}">
-            <span class="name">${c.isPk ? '<span class="pk">PK </span>' : ''}${esc(c.name)}</span>
-            <span class="ctype">${esc(c.type)}</span>
-          </div>`);
+      if (!sopen) continue;
+
+      for (const r of relations) {
+        shownTotal++;
+        const ckey = `rel:${sch.name}.${r.name}`;
+        const copen = live.expanded.has(ckey);
+        out.push(`<div class="tree-row rel" data-conn-scope="${esc(live.id)}" data-rel="${esc(sch.name)}|${esc(r.name)}" data-toggle="${esc(ckey)}" title="${esc(sch.name)}.${esc(r.name)}">
+          <span class="twisty">${copen ? '&#9662;' : '&#9656;'}</span>
+          <span class="kind ${r.kind}">${kindLabel(r.kind)}</span>
+          <span class="name">${esc(r.name)}</span>
+          <span class="meta">${r.estRows > 0 ? approx(r.estRows) : ''}</span>
+        </div>`);
+        if (copen) {
+          for (const c of r.columns) {
+            out.push(`<div class="tree-row column" title="${esc(c.name)} ${esc(c.type)}">
+              <span class="name">${c.isPk ? '<span class="pk">PK </span>' : ''}${esc(c.name)}</span>
+              <span class="ctype">${esc(c.type)}</span>
+            </div>`);
+          }
         }
       }
     }
   }
-  el.tree.innerHTML = out.join('') || '<div class="sidebar-foot" style="border:0">No matches.</div>';
-  el.sidebarFoot.textContent = `${conn.database} · PostgreSQL ${conn.serverVersion} · ${shown} objects`;
+
+  el.tree.innerHTML = out.join('') || '<div class="tree-empty">No matches.</div>';
+  const act = state.conns.get(state.activeConnId);
+  el.sidebarFoot.textContent = act
+    ? `${act.database} · PostgreSQL ${act.serverVersion}${needle ? ` · ${shownTotal} matches` : ''}`
+    : `${state.saved.length} saved · none connected`;
 }
 
 const kindLabel = (k) => ({ r: 'T', p: 'P', v: 'V', m: 'MV', f: 'F' }[k] || '?');
@@ -362,43 +410,88 @@ function approx(n) {
   return String(n);
 }
 
-el.tree.addEventListener('click', (e) => {
-  const conn = state.conns.get(state.activeConnId);
-  if (!conn) return;
+el.tree.addEventListener('click', async (e) => {
+  if (e.target.closest('[data-newconn]')) { openConnectionDialog(null); return; }
+
+  const menuBtn = e.target.closest('[data-connmenu]');
+  if (menuBtn) {
+    e.stopPropagation();
+    openConnectionMenu(menuBtn.dataset.connmenu, menuBtn);
+    return;
+  }
+
+  // A connection row: connect if needed, otherwise focus it and fold open/closed.
+  const connRow = e.target.closest('[data-conn]');
+  if (connRow) {
+    const savedId = connRow.dataset.conn;
+    const live = liveFor(savedId);
+    if (!live) {
+      const id = await connect(savedId);
+      if (id) state.expandedConns.add(savedId);
+      renderSidebar();
+      return;
+    }
+    if (state.activeConnId !== live.id) {
+      state.expandedConns.add(savedId);
+      focusConnection(live.id);
+      return;
+    }
+    if (state.expandedConns.has(savedId)) state.expandedConns.delete(savedId);
+    else state.expandedConns.add(savedId);
+    renderSidebar();
+    return;
+  }
+
+  // A schema or relation row inside one connection's subtree.
   const row = e.target.closest('[data-toggle]');
   if (!row) return;
+  const conn = state.conns.get(row.dataset.connScope);
+  if (!conn) return;
+  if (conn.id !== state.activeConnId) focusConnection(conn.id);
   const key = row.dataset.toggle;
   if (conn.expanded.has(key)) conn.expanded.delete(key);
   else conn.expanded.add(key);
-  renderTree();
+  renderSidebar();
 });
 
 el.tree.addEventListener('dblclick', (e) => {
   const row = e.target.closest('[data-rel]');
   if (!row) return;
+  const conn = state.conns.get(row.dataset.connScope);
+  if (!conn) return;
+  if (conn.id !== state.activeConnId) focusConnection(conn.id);
   const [schema, name] = row.dataset.rel.split('|');
-  openTableTab(schema, name);
+  openTableTab(schema, name, conn.id);
 });
 
 el.tree.addEventListener('contextmenu', async (e) => {
-  const row = e.target.closest('[data-rel]');
-  if (!row) return;
-  e.preventDefault();
-  const [schema, name] = row.dataset.rel.split('|');
-  try {
-    const ddl = await api.connections.ddl(state.activeConnId, schema, name);
-    newTab({ title: `${name} DDL`, sql: ddl + '\n' });
-  } catch (err) { toast(err.message, 'err'); }
+  const relRow = e.target.closest('[data-rel]');
+  if (relRow) {
+    e.preventDefault();
+    const conn = state.conns.get(relRow.dataset.connScope);
+    if (!conn) return;
+    const [schema, name] = relRow.dataset.rel.split('|');
+    try {
+      const ddl = await api.connections.ddl(conn.id, schema, name);
+      newTab({ title: `${name} DDL`, sql: ddl + '\n', connId: conn.id });
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  const connRow = e.target.closest('[data-conn]');
+  if (connRow) {
+    e.preventDefault();
+    openConnectionMenu(connRow.dataset.conn, connRow);
+  }
 });
 
 el.filter.addEventListener('input', () => {
   state.filter = el.filter.value;
-  renderTree();
+  renderSidebar();
 });
 
-function openTableTab(schema, name) {
+function openTableTab(schema, name, connId) {
   const sql = `select *\nfrom ${qrel(schema, name)}\nlimit 500;`;
-  newTab({ title: name, sql, run: true, kind: 'data' });
+  newTab({ title: name, sql, run: true, kind: 'data', connId: connId || state.activeConnId });
 }
 
 /* ----------------------------- running ----------------------------- */
@@ -727,6 +820,7 @@ async function exportCsv() {
 /* ----------------------------- toolbar ----------------------------- */
 
 function updateToolbar() {
+  renderConnPicker();
   const tab = activeTab();
   const running = !!(tab && tab.running);
   el.btnRun.disabled = running;
@@ -752,6 +846,100 @@ el.btnRun.addEventListener('click', () => runScript(false));
 el.btnRunAll.addEventListener('click', () => runScript(true));
 el.btnCancel.addEventListener('click', cancelQuery);
 el.btnNewConn.addEventListener('click', () => openConnectionDialog(null));
+
+/* ------------------------ connection manager ------------------------ */
+
+async function duplicateConnection(savedId) {
+  try {
+    const copy = await api.connections.duplicate(savedId);
+    await refreshSaved();
+    renderSidebar();
+    toast(`Duplicated as "${copy.name}".`, 'ok');
+    return copy;
+  } catch (err) { toast(err.message, 'err'); return null; }
+}
+
+async function reorderConnections(ids) {
+  try {
+    state.saved = await api.connections.reorder(ids);
+    renderSidebar();
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+/** Confirm, disconnect if live, then forget the saved record. */
+async function deleteConnection(saved) {
+  const ok = await api.ui.confirm({
+    title: 'Delete connection',
+    message: `Delete "${saved.name}"?`,
+    detail: 'This removes the saved connection and its stored password. Nothing on the server changes.',
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!ok) return false;
+  const live = liveFor(saved.id);
+  if (live) await disconnect(live.id);
+  await api.connections.remove(saved.id);
+  await refreshSaved();
+  renderSidebar();
+  return true;
+}
+
+/** Bind the active tab to a connection and make it the focused one. */
+function useForCurrentTab(connId) {
+  const tab = activeTab();
+  if (!tab || !state.conns.has(connId)) return;
+  bindTabToConnection(tab, connId);
+  focusConnection(connId, { bindTab: false });
+  const conn = state.conns.get(connId);
+  toast(`"${tab.title}" now runs on ${conn.name} · ${conn.database}.`);
+}
+
+function newTabOn(connId) {
+  const conn = state.conns.get(connId);
+  if (!conn) return;
+  newTab({ connId, title: `${conn.name} query` });
+  focusConnection(connId, { bindTab: false });
+}
+
+connections.wire({
+  saved: () => state.saved,
+  liveFor,
+  connect,
+  disconnect,
+  loadSchema,
+  duplicate: duplicateConnection,
+  reorder: reorderConnections,
+  deleteConnection,
+  useForCurrentTab,
+  newTabOn,
+  openConnectionDialog: (rec) => openConnectionDialog(rec),
+  showOverlay: (node) => showOverlay(node),
+  refreshSaved,
+  save: (rec) => api.connections.save(rec),
+  test: (rec) => api.connections.test(rec),
+});
+
+const openConnectionManager = (id) => connections.openConnectionManager(id);
+const openConnectionMenu = (id, anchor) => connections.openConnectionMenu(id, anchor);
+
+/** The connection chip in the editor toolbar, showing where this tab runs. */
+function renderConnPicker() {
+  const tab = activeTab();
+  const conn = tab && tab.connId ? state.conns.get(tab.connId) : null;
+  const saved = conn ? state.saved.find((x) => x.id === conn.savedId) : null;
+  const color = saved && saved.color ? saved.color : null;
+  el.btnConn.innerHTML = conn
+    ? `<span class="conn-color" style="background:${color || 'var(--text-faint)'}"></span>` +
+      `<span class="cp-name">${esc(conn.name)}</span><span class="cp-db">${esc(conn.database)}</span>` +
+      (conn.readOnly ? '<span class="ro-flag">RO</span>' : '')
+    : '<span class="conn-color" style="background:var(--red)"></span><span class="cp-name">No connection</span>';
+  el.btnConn.title = conn
+    ? `This tab runs on ${conn.name} (${conn.database}). Click to switch — Ctrl+K.`
+    : 'This tab is not attached to a connection. Click to pick one — Ctrl+K.';
+  el.btnConn.classList.toggle('unset', !conn);
+}
+
+el.btnConn.addEventListener('click', () => connections.openConnectionPicker(el.btnConn));
 
 /* ------------------------------ modals ------------------------------ */
 
@@ -987,6 +1175,8 @@ function openCommandPalette() {
   const cmds = [
     { label: 'New query tab', run: () => newTab() },
     { label: 'New connection…', run: () => openConnectionDialog(null) },
+    { label: 'Manage connections…', run: () => openConnectionManager() },
+    { label: 'Switch this tab to another connection…', run: () => connections.openConnectionPicker(el.btnConn) },
     { label: 'Refresh schema', run: () => state.activeConnId && loadSchema(state.activeConnId) },
     { label: 'Run current statement', run: () => runScript(false) },
     { label: 'Run whole script', run: () => runScript(true) },
@@ -1042,7 +1232,7 @@ function saveWorkspace() {
       tabs: state.tabs.map((t) => ({
         title: t.title,
         sql: t === current ? editor.getValue() : t.editorState.doc.toString(),
-        savedId: t.connId && state.conns.get(t.connId) ? state.conns.get(t.connId).savedId : null,
+        savedId: (t.connId && state.conns.get(t.connId) ? state.conns.get(t.connId).savedId : t.savedId) || null,
       })),
       activeIndex: state.tabs.findIndex((t) => t.id === state.activeTabId),
       sidebarWidth: getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w').trim(),
@@ -1059,7 +1249,10 @@ async function restoreWorkspace() {
   if (ws && ws.editorHeight) document.documentElement.style.setProperty('--editor-h', ws.editorHeight);
 
   if (ws && ws.tabs && ws.tabs.length) {
-    for (const t of ws.tabs) newTab({ title: t.title, sql: t.sql, connId: null });
+    for (const t of ws.tabs) {
+      const tab = newTab({ title: t.title, sql: t.sql, connId: null });
+      tab.savedId = t.savedId || null;      // reattached once that connection opens
+    }
     const idx = Math.max(0, Math.min(state.tabs.length - 1, ws.activeIndex ?? 0));
     selectTab(state.tabs[idx].id);
   } else {
@@ -1114,6 +1307,8 @@ api.ui.onMenu((cmd) => {
   const tab = activeTab();
   switch (cmd) {
     case 'connection:new': openConnectionDialog(null); break;
+    case 'connection:manage': openConnectionManager(); break;
+    case 'connection:switch': connections.openConnectionPicker(el.btnConn); break;
     case 'tab:new': newTab(); break;
     case 'tab:close': if (tab) closeTab(tab.id); break;
     case 'tab:next': cycleTab(1); break;
@@ -1166,7 +1361,7 @@ async function boot() {
 
   updateToolbar();
   renderStatus();
-  renderTree();
+  renderSidebar();
   editor.focus();
   // Readiness signal: connections restored, schema loaded, first paint done.
   document.body.dataset.ready = '1';

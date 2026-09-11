@@ -11,7 +11,17 @@ npm run dev        # same, with devtools and renderer console forwarding
 
 ## What it does
 
-**Connections.** Saved in `userData/cobalt-connections.json`. Passwords are encrypted
+**Connections.** A manager (`Ctrl+Shift+O`) lists every saved connection with search,
+duplicate, reorder, colour and grouping, and an edit form with Test/Connect. The sidebar
+is a tree rooted at each connection, so several can be open and expanded at once and you
+can jump between them without disconnecting — green dot means live, `RO` means read-only.
+
+Each query tab is bound to one connection, shown as a chip in the editor toolbar; click
+it or press `Ctrl+K` to move that tab to a different connection. Tabs remember their
+connection across restarts and reattach when it opens. Connection colours run down the
+tab strip so a production tab is obvious.
+
+Saved in `userData/cobalt-connections.json`. Passwords are encrypted
 with the OS keychain (DPAPI on Windows, Keychain on macOS) via Electron's `safeStorage`
 and never travel to the renderer — it only ever sees a `hasPassword` flag. Mark a
 connection read-only to disable grid editing against production — that flag is
@@ -82,6 +92,8 @@ the error position — and the editor caret jumps there.
 | `Ctrl+P` | Quick-open table |
 | `Ctrl+Shift+P` | Command palette |
 | `Ctrl+N` | New connection |
+| `Ctrl+Shift+O` | Manage connections |
+| `Ctrl+K` | Switch this tab's connection |
 | `Ctrl+R` | Refresh schema |
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
 | `Ctrl+Shift+F` | Toggle the filter row |
@@ -100,9 +112,11 @@ docker run -d --name cobalt-test-pg -e POSTGRES_PASSWORD=cobalt -e POSTGRES_USER
   -e POSTGRES_DB=cobalt -p 15432:5432 postgres:16-alpine
 docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
-node test/db.test.js       # 24 checks: splitting, editability, commits, sessions, cancel
+node test/store.test.js    # 12 checks: ordering, duplication, password handling
+node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
+node test/manager.js      # multi-connection sidebar, manager dialog, tab rebinding
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -132,6 +146,7 @@ src/main/
   store.js      saved connections + workspace, safeStorage encryption
 src/renderer/
   app.js        state, sidebar, tabs, results, dialogs, palette
+  connections.js  connection manager, row menu, tab connection picker
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   filter.js     filter expression parser

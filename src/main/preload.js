@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('cobalt', {
     list: () => call('conn:list'),
     save: (record) => call('conn:save', record),
     remove: (id) => call('conn:delete', id),
+    duplicate: (id) => call('conn:duplicate', id),
+    reorder: (ids) => call('conn:reorder', ids),
     test: (record) => call('conn:test', record),
     open: (savedId, overrides) => call('conn:open', savedId, overrides),
     close: (id) => call('conn:close', id),
