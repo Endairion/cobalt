@@ -203,6 +203,26 @@ async function test(name, fn) {
     await m.run(id, 'tab1', 'drop table "we ird.name"');
   });
 
+  await test('a read-only connection refuses writes in the main process', async () => {
+    const ro = new Manager();
+    const conn = await ro.open({ ...CFG, name: 'RO', readOnly: true });
+    const { results } = await ro.run(conn.id, 'tab1', 'select * from shop.customers order by id limit 1');
+    const r = results[0];
+    assert.strictEqual(r.editable, true, 'the result itself is editable');
+    const nameIdx = r.columns.findIndex((c) => c.name === 'full_name');
+    const before = r.rows[0][nameIdx];
+    await assert.rejects(
+      () => ro.applyChanges(conn.id, {
+        source: r.source, columns: r.columns, key: r.key,
+        updates: [{ keyValues: [r.rows[0][0]], set: { [nameIdx]: 'should not stick' } }],
+      }),
+      /read-only/i
+    );
+    const after = await ro.run(conn.id, 'tab1', `select full_name from shop.customers where id = ${r.rows[0][0]}`);
+    assert.strictEqual(after.results[0].rows[0][0], before, 'row must be untouched');
+    await ro.close(conn.id);
+  });
+
   console.log('\nsessions & introspection');
 
   await test('each tab gets its own backend session', async () => {
