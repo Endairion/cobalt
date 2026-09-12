@@ -3,6 +3,21 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.12.1 — Start connected
+*2026-09-12*
+
+With more than one connection saved, the app opened none of them.
+
+### Added
+- Whichever connections were open when you last quit are reopened, and the one you were working in stays focused. A connection deleted in the meantime is skipped rather than failing the restore.
+
+### Changed
+- A command that needs a database now opens the connection picker instead of only complaining, so the refusal is something you can act on.
+
+### Fixed
+- Startup only opened a connection when exactly one was saved. With several, nothing connected, so every command that needs a database refused - which reads as the whole menu being broken rather than as nothing being connected.
+- A byte order mark in the connections or history file no longer wipes it. JSON.parse throws on one and the file was treated as unreadable, which an editor on Windows could cause by saving a hand edit.
+
 ## 0.12.0 — One filter for the whole result
 *2026-09-12*
 

@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.12.1',
+    date: '2026-09-12',
+    title: 'Start connected',
+    summary: 'With more than one connection saved, the app opened none of them.',
+    changes: [
+      { type: 'fixed', text: 'Startup only opened a connection when exactly one was saved. With several, nothing connected, so every command that needs a database refused - which reads as the whole menu being broken rather than as nothing being connected.' },
+      { type: 'added', text: 'Whichever connections were open when you last quit are reopened, and the one you were working in stays focused. A connection deleted in the meantime is skipped rather than failing the restore.' },
+      { type: 'changed', text: 'A command that needs a database now opens the connection picker instead of only complaining, so the refusal is something you can act on.' },
+      { type: 'fixed', text: 'A byte order mark in the connections or history file no longer wipes it. JSON.parse throws on one and the file was treated as unreadable, which an editor on Windows could cause by saving a hand edit.' },
+    ],
+  },
+  {
     version: '0.12.0',
     date: '2026-09-12',
     title: 'One filter for the whole result',

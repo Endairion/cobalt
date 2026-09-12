@@ -559,10 +559,7 @@ function openTableTab(schema, name, connId) {
 async function runScript(all) {
   const tab = activeTab();
   if (!tab) return;
-  if (!tab.connId || !state.conns.has(tab.connId)) {
-    toast('This tab is not attached to a connection. Pick one in the sidebar.', 'err');
-    return;
-  }
+  if (!ensureConnection(tab)) return;
   if (tab.running) { toast('Query already running in this tab.'); return; }
 
   if (tab.grid && tab.grid.dirtyCount()) {
@@ -741,10 +738,7 @@ function splitForPerf(text) {
 
 async function runBenchmark() {
   const tab = activeTab();
-  if (!tab || !tab.connId || !state.conns.has(tab.connId)) {
-    toast('Attach this tab to a connection first.', 'err');
-    return;
-  }
+  if (!ensureConnection(tab)) return;
   if (tab.running) { toast('This tab is busy.'); return; }
   const variants = benchmarkVariants();
   if (!variants.length) { toast('Nothing to benchmark.'); return; }
@@ -781,10 +775,7 @@ async function runBenchmark() {
 
 async function runExplain(analyze) {
   const tab = activeTab();
-  if (!tab || !tab.connId || !state.conns.has(tab.connId)) {
-    toast('Attach this tab to a connection first.', 'err');
-    return;
-  }
+  if (!ensureConnection(tab)) return;
   if (tab.running) { toast('This tab is busy.'); return; }
   const st = editor.currentStatement();
   if (!st || !st.sql.trim()) { toast('Nothing to explain.'); return; }
@@ -1196,6 +1187,19 @@ el.dataHead.addEventListener('click', (e) => {
     editor.focus();
   }
 });
+
+/** Commands that need a database say so by offering one, not just complaining. */
+function ensureConnection(tab) {
+  if (tab && tab.connId && state.conns.has(tab.connId)) return true;
+  if (!state.saved.length) {
+    toast('No connections yet — add one first.', 'err');
+    openConnectionDialog(null);
+    return false;
+  }
+  toast('This tab has no connection — choose one.', 'err');
+  connections.openConnectionPicker(el.btnConn);
+  return false;
+}
 
 /* ------------------------------ paging ------------------------------ */
 
@@ -2043,6 +2047,9 @@ function saveWorkspace() {
       })),
       activeIndex: state.tabs.findIndex((t) => t.id === state.activeTabId),
       pageSize: state.pageSize,
+      openConnections: [...state.conns.values()].map((c) => c.savedId).filter(Boolean),
+      activeSavedId: state.activeConnId && state.conns.get(state.activeConnId)
+        ? state.conns.get(state.activeConnId).savedId : null,
       sidebarWidth: getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w').trim(),
       editorHeight: getComputedStyle(document.documentElement).getPropertyValue('--editor-h').trim(),
     };
@@ -2064,8 +2071,39 @@ async function restoreWorkspace() {
     }
     const idx = Math.max(0, Math.min(state.tabs.length - 1, ws.activeIndex ?? 0));
     selectTab(state.tabs[idx].id);
-  } else {
-    newTab({ title: 'Query 1', sql: '-- Connect on the left, then Ctrl+Enter to run.\nselect version();\n' });
+    return ws;
+  }
+  newTab({ title: 'Query 1', sql: '-- Connect on the left, then Ctrl+Enter to run.\nselect version();\n' });
+  return ws;
+}
+
+/**
+ * Reopen whatever was connected last time.
+ *
+ * Without this, anyone with more than one saved connection starts disconnected,
+ * and every command needing a database refuses — which reads as the app being
+ * broken rather than as nothing being connected.
+ */
+async function restoreConnections(ws) {
+  const wanted = (ws && Array.isArray(ws.openConnections) ? ws.openConnections : [])
+    .filter((id) => state.saved.some((sv) => sv.id === id));
+
+  if (wanted.length) {
+    for (const savedId of wanted) await connect(savedId);
+    const active = ws.activeSavedId ? liveFor(ws.activeSavedId) : null;
+    if (active) focusConnection(active.id, { bindTab: false });
+  } else if (state.saved.length) {
+    // Nothing remembered yet: open the first one rather than starting with no
+    // database, which leaves every command refusing and looks like a fault.
+    // From here on the set that was open is restored instead.
+    await connect(state.saved[0].id);
+  }
+
+  // Give every tab a connection: its own if it remembers one, else the active.
+  for (const t of state.tabs) {
+    if (t.connId) continue;
+    const own = t.savedId ? liveFor(t.savedId) : null;
+    t.connId = own ? own.id : state.activeConnId;
   }
 }
 
@@ -2206,11 +2244,8 @@ async function boot() {
   } catch { /* version panel simply stays blank */ }
 
   await refreshSaved();
-  await restoreWorkspace();
-
-  // Auto-attach a single saved connection so the first run just works.
-  if (state.saved.length === 1) await connect(state.saved[0].id);
-  for (const t of state.tabs) if (!t.connId) t.connId = state.activeConnId;
+  const ws = await restoreWorkspace();
+  await restoreConnections(ws);
 
   updateToolbar();
   renderStatus();

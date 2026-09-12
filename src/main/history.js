@@ -42,7 +42,7 @@ class History {
   /** Every entry, oldest first. Unparseable lines are skipped rather than fatal. */
   all() {
     let raw;
-    try { raw = fs.readFileSync(this.file, 'utf8'); }
+    try { raw = fs.readFileSync(this.file, 'utf8').replace(/^﻿/, ''); }
     catch { return []; }
     const out = [];
     for (const line of raw.split('\n')) {

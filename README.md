@@ -21,7 +21,9 @@ it or press `Ctrl+K` to move that tab to a different connection. Tabs remember t
 connection across restarts and reattach when it opens. Connection colours run down the
 tab strip so a production tab is obvious.
 
-Saved in `userData/cobalt-connections.json`. Passwords are encrypted through
+Whatever was connected when you last quit is reopened on the next launch, with the
+connection you were working in still focused; on a first run the first saved connection
+is opened so nothing sits refusing commands. Saved in `userData/cobalt-connections.json`. Passwords are encrypted through
 `safeStorage`, which keys off the profile's own `Local State` file — so if you back up or
 move the app data folder, take `Local State` with it or the stored passwords will not
 decrypt. The app says so plainly when that happens and asks for the password again. A
@@ -157,6 +159,8 @@ node test/menuui.js       # the in-app menu, toolbar buttons, real key presses
 node test/browseui.js     # click-to-browse, tab reuse, open as query
 node test/safetyui.js     # staged-change bar, undo, filtering writes nothing
 node test/filterbarui.js  # the expression bar, column chooser, filter-by-value
+node test/reconnectui.js  # startup reopens what was connected
+node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
