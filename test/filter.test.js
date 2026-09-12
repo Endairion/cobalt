@@ -150,6 +150,35 @@ const parseFilter = new Function(`${src}; return parseFilter;`)();
     assert.strictEqual(r.results[0].rows[0][1], 'user2000@example.com');
   });
 
+  await test('filtering never writes to the table', async () => {
+    // A fingerprint of the whole table, before and after a lot of filtering.
+    const fingerprint = async () => {
+      const r = await m.run(id, 'f1',
+        "select count(*)::text || ':' || coalesce(md5(string_agg(c::text, '|' order by id)), '') as fp from shop.customers c");
+      return r.results[0].rows[0][0];
+    };
+    const before = await fingerprint();
+
+    const base = 'select * from shop.customers limit 500';
+    await m.runFiltered(id, 'f1', base, [{ name: 'email', op: 'ilike', value: '%user1%' }]);
+    await m.runFiltered(id, 'f1', base, [{ name: 'balance', op: '>', value: '100' }]);
+    await m.runFiltered(id, 'f1', base, [{ name: 'full_name', op: 'is null' }]);
+    await m.runFiltered(id, 'f1', base, [{ name: 'id', op: 'in', values: ['1', '2', '3'] }]);
+    await m.runFiltered(id, 'f1', base, []);
+
+    assert.strictEqual(await fingerprint(), before, 'every row is exactly as it was');
+  });
+
+  await test('a filter only ever produces a SELECT', async () => {
+    const { text } = buildFilteredQuery('select * from shop.customers', [
+      { name: 'email', op: 'ilike', value: '%x%' },
+      { name: 'balance', op: '>', value: '10' },
+    ]);
+    assert.match(text.trim(), /^select\b/i, 'starts as a select');
+    assert.ok(!/\b(insert|update|delete|truncate|drop|alter|create|merge)\b/i.test(text),
+      `no writing keyword appears in ${text}`);
+  });
+
   await test('a filtered result is still editable', async () => {
     const r = await m.runFiltered(id, 'f1', 'select * from shop.customers limit 100',
       [{ name: 'balance', op: '>', value: '500' }]);

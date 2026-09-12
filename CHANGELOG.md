@@ -3,6 +3,17 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.11.1 — Nothing is written until you say so
+*2026-09-12*
+
+Filtering never changes data, and now the app makes that obvious.
+
+### Added
+- A bar above the grid appears the moment an edit is staged: what is staged, that nothing has been written to the database yet, and buttons to commit or discard. Staged edits were already local-only, but the grid gave no reassurance of it.
+- Ctrl+Z in the grid steps back one staged change, so a cell typed into by accident no longer means discarding every other edit to be rid of it.
+- The filter row is labelled "filter" in the row-number gutter, since it sits directly above the data and a stray keystroke in the grid starts editing a cell rather than filtering.
+- Tests that fingerprint the whole table before and after filtering and assert it is unchanged, and that a filter can only ever produce a SELECT.
+
 ## 0.11.0 — Browse a table by clicking it
 *2026-09-12*
 

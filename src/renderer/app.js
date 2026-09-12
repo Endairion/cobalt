@@ -40,6 +40,7 @@ const el = {
   btnHistory: $('btn-history'),
   btnMore: $('btn-more'),
   dataHead: $('data-head'),
+  pendingBar: $('pending-bar'),
   appMenu: $('app-menu'),
 };
 
@@ -1221,7 +1222,7 @@ function renderResults() {
 
   if (!tab.grid) {
     tab.grid = new ResultGrid(el.gridHost, {
-      onDirtyChange: () => { renderGridToolbar(); renderTabs(); },
+      onDirtyChange: () => { renderGridToolbar(); renderPendingBar(); renderTabs(); },
       onStatus: (s) => { el.statusRight.textContent = s; },
       onFilter: (specs) => {
         if (tab.pageState) { tab.pageState.filters = specs; tab.pageState.total = null; loadPage(tab); }
@@ -1289,6 +1290,26 @@ function renderGridToolbar() {
     : `<span class="spacer"></span>${filterBtn}${pageSizePicker(ps)}<button class="btn small ghost" data-act="csv">${ps && ps.hasMore ? 'CSV (loaded)' : 'CSV'}</button>`;
 
   el.gridToolbar.innerHTML = bits.join('') + actions;
+  renderPendingBar();
+}
+
+/**
+ * Staged edits are invisible to the database until Commit, and people quite
+ * reasonably worry otherwise, so say it outright while any are pending.
+ */
+function renderPendingBar() {
+  const tab = activeTab();
+  const g = tab && tab.grid;
+  const n = g ? g.dirtyCount() : 0;
+  el.pendingBar.hidden = !n;
+  if (!n) return;
+  el.pendingBar.innerHTML = `
+    <span class="pb-dot"></span>
+    <span><b>${esc(g.changeSummary())}</b> staged — nothing has been written to the database yet.</span>
+    <span class="pb-hint">Ctrl+Z undoes the last one</span>
+    <span class="spacer"></span>
+    <button class="btn small ghost" data-act="discard">Discard all</button>
+    <button class="btn small primary" data-act="commit">Commit</button>`;
 }
 
 function pageSizePicker(ps) {
@@ -1305,12 +1326,16 @@ el.gridToolbar.addEventListener('change', (e) => {
   if (tab) setPageSize(tab, Number(sel.value));
 });
 
-el.gridToolbar.addEventListener('click', (e) => {
-  const act = e.target.closest('[data-act]');
+el.pendingBar.addEventListener('click', (e) => el.gridToolbar.dispatchEvent(
+  new CustomEvent('toolbar-action', { detail: e.target.closest('[data-act]') })));
+
+/** Shared by the result toolbar and the pending-changes bar. */
+function handleGridAction(actEl) {
+  const act = actEl && actEl.dataset.act;
   if (!act) return;
   const tab = activeTab();
   if (!tab || !tab.grid) return;
-  switch (act.dataset.act) {
+  switch (act) {
     case 'add': tab.grid.addRow(); break;
     case 'del': tab.grid.toggleDelete(); break;
     case 'commit': commitGrid(); break;
@@ -1320,7 +1345,10 @@ el.gridToolbar.addEventListener('click', (e) => {
     case 'filter': tab.grid.toggleFilter(); renderGridToolbar(); break;
     case 'clearFilters': tab.grid.clearFilters(); renderGridToolbar(); break;
   }
-});
+}
+
+el.gridToolbar.addEventListener('click', (e) => handleGridAction(e.target.closest('[data-act]')));
+el.pendingBar.addEventListener('click', (e) => handleGridAction(e.target.closest('[data-act]')));
 
 el.resultTabs.addEventListener('click', async (e) => {
   const r = e.target.closest('[data-r]');
@@ -2051,6 +2079,10 @@ window.__cobaltGridRows = () => {
 window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
 window.__cobaltMenu = (cmd) => menuCommand(cmd);
+window.__cobaltDirty = () => {
+  const t = activeTab();
+  return t && t.grid ? t.grid.dirtyCount() : 0;
+};
 window.__cobaltCell = (row, col) => {
   const t = activeTab();
   return t && t.grid ? t.grid.valueAt(row, col) : null;

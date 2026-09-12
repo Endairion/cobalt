@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.11.1',
+    date: '2026-09-12',
+    title: 'Nothing is written until you say so',
+    summary: 'Filtering never changes data, and now the app makes that obvious.',
+    changes: [
+      { type: 'added', text: 'A bar above the grid appears the moment an edit is staged: what is staged, that nothing has been written to the database yet, and buttons to commit or discard. Staged edits were already local-only, but the grid gave no reassurance of it.' },
+      { type: 'added', text: 'Ctrl+Z in the grid steps back one staged change, so a cell typed into by accident no longer means discarding every other edit to be rid of it.' },
+      { type: 'added', text: 'The filter row is labelled "filter" in the row-number gutter, since it sits directly above the data and a stray keystroke in the grid starts editing a cell rather than filtering.' },
+      { type: 'added', text: 'Tests that fingerprint the whole table before and after filtering and assert it is unchanged, and that a filter can only ever produce a SELECT.' },
+    ],
+  },
+  {
     version: '0.11.0',
     date: '2026-09-12',
     title: 'Browse a table by clicking it',
