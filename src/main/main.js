@@ -1,16 +1,18 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Manager } = require('./db');
 const { Store } = require('./store');
+const { History } = require('./history');
 const changelog = require('../shared/changelog');
 const pkg = require('../../package.json');
 
 const isMac = process.platform === 'darwin';
 const manager = new Manager();
 let store = null;
+let history = null;
 let win = null;
 
 function createWindow() {
@@ -34,7 +36,10 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    if (smokeTarget()) showQuietly(win);
+    else win.show();
+  });
 
   const pushWindowState = () => {
     if (!win || win.isDestroyed()) return;
@@ -67,6 +72,31 @@ function createWindow() {
 }
 
 const send = (cmd) => win && win.webContents.send('menu', cmd);
+
+/**
+ * Test runs should not interrupt whoever is using the machine: put the window
+ * on a second display when there is one, keep it out of the taskbar, and show
+ * it without taking focus. It still has to be shown and composited, because a
+ * hidden window stops producing frames and capturePage would return a stale one.
+ */
+function showQuietly(w) {
+  try {
+    const primary = screen.getPrimaryDisplay();
+    const other = screen.getAllDisplays().find((d) => d.id !== primary.id);
+    if (other) {
+      const [width, height] = w.getSize();
+      const area = other.workArea;
+      w.setBounds({
+        x: Math.round(area.x + Math.max(0, (area.width - width) / 2)),
+        y: Math.round(area.y + Math.max(0, (area.height - height) / 2)),
+        width: Math.min(width, area.width),
+        height: Math.min(height, area.height),
+      });
+    }
+    w.setSkipTaskbar(true);
+  } catch { /* placement is a nicety, never fail the run over it */ }
+  w.showInactive();
+}
 
 /* Smoke mode: `--smoke=out.png[,cmd1,cmd2]` boots the UI, optionally fires menu
    commands, writes a screenshot and exits. Used by test/smoke.js. */
@@ -165,6 +195,7 @@ function buildMenu() {
       label: 'Go',
       submenu: [
         { label: 'Quick Open Table…', accelerator: 'CmdOrCtrl+P', click: () => send('palette:tables') },
+        { label: 'Query History…', accelerator: 'CmdOrCtrl+H', click: () => send('history:open') },
         { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+P', click: () => send('palette:commands') },
         { label: 'Focus Editor', accelerator: 'CmdOrCtrl+E', click: () => send('focus:editor') },
         { label: 'Refresh Schema', accelerator: 'CmdOrCtrl+R', click: () => send('schema:refresh') },
@@ -294,6 +325,11 @@ handle('app:unseenReleases', () => {
   return { from: seen, releases: changelog.since(seen) };
 });
 
+handle('history:add', (entry) => history.append(entry));
+handle('history:search', (opts) => history.search(opts || {}));
+handle('history:stats', () => history.stats());
+handle('history:clear', () => { history.clear(); return true; });
+
 handle('ws:get', () => store.getWorkspace());
 handle('ws:set', (ws) => { store.setWorkspace(ws); return true; });
 
@@ -345,6 +381,8 @@ handle('dialog:confirm', async ({ title, message, detail, confirmLabel, destruct
 
 app.whenReady().then(() => {
   store = new Store('cobalt-connections.json');
+  history = new History(path.join(app.getPath('userData'), 'cobalt-history.jsonl'));
+  try { history.trim(); } catch { /* a broken history file must not block startup */ }
   buildMenu();
   createWindow();
   app.on('activate', () => {

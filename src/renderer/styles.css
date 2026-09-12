@@ -882,3 +882,58 @@ tr.best .bar-fill { background: var(--green); }
   font-size: 11.5px; outline: none; cursor: pointer;
 }
 .page-size:hover { border-color: var(--accent); color: var(--text); }
+
+/* ---------------------------- query history ---------------------------- */
+
+.history-modal { width: 920px; max-width: 96vw; }
+.hist-body {
+  display: grid; grid-template-columns: 360px 1fr;
+  height: 460px; max-height: 62vh; min-height: 0;
+}
+.hist-left {
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-width: 0; min-height: 0;
+}
+.hist-search {
+  margin: 12px 12px 8px; padding: 7px 10px;
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-radius: 7px; outline: none; user-select: text;
+}
+.hist-search:focus { border-color: var(--accent); }
+.hist-filters { display: flex; gap: 14px; padding: 0 12px 8px; }
+.hist-filters .checkline { font-size: 11.5px; }
+.hist-rows { flex: 1 1 auto; overflow: auto; padding: 0 8px 10px; min-height: 0; }
+.hist-row {
+  padding: 7px 9px; border-radius: 7px; cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.hist-row:hover { background: var(--bg-sunken); }
+.hist-row.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+.hist-row.failed { border-left-color: var(--red); }
+.hist-sql-line {
+  font-family: var(--mono); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-sub {
+  display: flex; gap: 9px; align-items: center;
+  margin-top: 3px; font-size: 10.5px; color: var(--text-dim);
+}
+.hist-sub .dim { color: var(--text-faint); }
+.hist-badge {
+  font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 4px;
+  border: 1px solid var(--border-strong); color: var(--text-faint);
+}
+.hist-badge.err { color: var(--red); border-color: rgba(242,105,92,.5); }
+.hist-right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.hist-sql {
+  flex: 1 1 auto; margin: 0; padding: 14px 16px; overflow: auto;
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  color: var(--text); white-space: pre-wrap; user-select: text; min-height: 0;
+}
+.hist-meta {
+  border-top: 1px solid var(--border); padding: 10px 16px;
+  font-size: 11.5px; color: var(--text-dim); line-height: 1.7;
+}
+.hist-meta b { color: var(--text-faint); font-weight: 400; margin-right: 6px; }
+.hist-err { color: var(--red); }
