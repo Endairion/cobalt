@@ -13,6 +13,17 @@
 
 const releases = [
   {
+    version: '0.18.0',
+    date: '2026-09-13',
+    title: 'Tidy up the SQL',
+    summary: 'A formatter that moves whitespace and changes nothing else.',
+    changes: [
+      { type: 'added', text: 'Ctrl+Shift+K lays out the statement under the caret, or exactly what is selected; Ctrl+Alt+K does the whole script. Only that span is rewritten, so the rest of a long file and its undo history are left alone and Ctrl+Z takes it back in one step.' },
+      { type: 'changed', text: 'The formatter tokenizes first, so strings, dollar-quoted function bodies, quoted identifiers and comments come through byte for byte. A test re-tokenizes the output and asserts the significant tokens are identical to the input, across a corpus that includes E-strings, nested block comments, jsonb operators and plpgsql bodies - the layout is taste, that is the guarantee. Another asserts running it twice changes nothing.' },
+      { type: 'changed', text: 'Keywords are lowercased; identifiers and function names keep their case, because re-casing a quoted name is a rename. A comment that sat at the end of a line stays at the end of that line.' },
+    ],
+  },
+  {
     version: '0.17.0',
     date: '2026-09-13',
     title: 'MySQL, and what the server is doing',

@@ -7,6 +7,7 @@ import { isReadOnlyStatement } from '../shared/sqlkind.js';
 import * as history from './history.js';
 import { showMenu } from './menu.js';
 import { validateWhere, andWith } from '../shared/whereclause.js';
+import { format as formatSql, formatScript } from '../shared/sqlformat.js';
 import * as appmenu from './appmenu.js';
 import * as inspector from './inspector.js';
 import * as schemaops from './schemaops.js';
@@ -1781,6 +1782,38 @@ function exportResult() {
   });
 }
 
+/**
+ * Tidy up the statement under the caret, or exactly what is selected.
+ *
+ * Only that span is rewritten, so the rest of a long script — and its undo
+ * history — is left alone. Ctrl+Z takes it back in one step.
+ */
+function formatCurrent() {
+  if (!editor) return;
+  const st = editor.currentStatement();
+  if (!st || !st.sql.trim()) { toast('Nothing to format.'); return; }
+  try {
+    const out = formatSql(st.sql);
+    if (out === st.sql.trim()) { toast('Already tidy.'); return; }
+    // A statement's span starts right after the previous semicolon, so it owns
+    // the blank line above it. Replacing the whole span would delete that and
+    // glue this statement onto the one before.
+    const lead = /^\s*/.exec(st.sql)[0];
+    editor.replaceRange(st.start, st.end, lead + out);
+  } catch (err) { toast(`Could not format: ${err.message}`, 'err'); }
+}
+
+function formatEverything() {
+  if (!editor) return;
+  const text = editor.getValue();
+  if (!text.trim()) { toast('Nothing to format.'); return; }
+  try {
+    const out = formatScript(text);
+    if (out === text.trim()) { toast('Already tidy.'); return; }
+    editor.replaceAll(out, out.length);
+  } catch (err) { toast(`Could not format: ${err.message}`, 'err'); }
+}
+
 /* ----------------------------- toolbar ----------------------------- */
 
 function updateToolbar() {
@@ -2476,6 +2509,8 @@ function menuCommand(cmd) {
     case 'query:run': runScript(false); break;
     case 'query:runAll': runScript(true); break;
     case 'query:cancel': cancelQuery(); break;
+    case 'edit:format': formatCurrent(); break;
+    case 'edit:formatAll': formatEverything(); break;
     case 'perf:benchmark': runBenchmark(); break;
     case 'perf:explain': runExplain(false); break;
     case 'perf:explainAnalyze': runExplain(true); break;
@@ -2557,6 +2592,7 @@ window.__cobaltGridRows = () => {
 };
 window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
+window.__cobaltSetCaret = (pos) => editor.setCaret(pos);
 window.__cobaltMenu = (cmd) => menuCommand(cmd);
 window.__cobaltInspector = () => inspector.debugState();
 // Drives the import dialog without an OS file picker, which a test cannot answer.

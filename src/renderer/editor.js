@@ -184,6 +184,21 @@ export class SqlEditor {
     });
   }
 
+  /** Put the caret at an offset, for tests and for jumping to an error. */
+  setCaret(pos) {
+    const at = Math.max(0, Math.min(Number(pos) || 0, this.view.state.doc.length));
+    this.view.dispatch({ selection: { anchor: at } });
+  }
+
+  /** Swap one span of the document, keeping the caret where it makes sense. */
+  replaceRange(from, to, text) {
+    this.view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+    });
+    this.focus();
+  }
+
   insertAtCursor(text) {
     const sel = this.view.state.selection.main;
     this.view.dispatch({

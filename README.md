@@ -58,7 +58,14 @@ the renderer.
 The statement under the caret is tinted, and that is exactly what `Ctrl+Enter` runs —
 with a selection, it runs the selection instead. Each tab keeps its own undo history.
 
-**Statement splitting.** A real splitter, not `split(';')`: it understands line and
+**Formatting.** `Ctrl+Shift+K` lays out the statement under the caret (or the selection);
+`Ctrl+Alt+K` does the whole script. It tokenizes first, so strings, dollar-quoted function
+bodies, quoted identifiers and comments come through byte for byte - a test re-tokenizes
+the output and asserts the significant tokens are identical to the input, which is the
+guarantee worth having; the indentation is taste. Keywords are lowercased; identifiers and
+function names keep their case, since re-casing a quoted name is a rename.
+
+**Statement splitting. A real splitter, not `split(';')`: it understands line and
 nested block comments, `''` escapes, `E'\'` strings, quoted identifiers, and
 dollar-quoting, so function bodies survive intact.
 
@@ -176,6 +183,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+I` | Value inspector |
 | `Ctrl+Shift+X` | Export the result |
 | `Ctrl+Shift+L` | Server activity |
+| `Ctrl+Shift+K` / `Ctrl+Alt+K` | Format statement / whole script |
 | `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
 | `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
@@ -208,6 +216,7 @@ node test/db.test.js       # 25 checks: splitting, editability, commits, session
 node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
 node test/where.test.js    # 18 checks: what an expression may contain, and may not
 node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
+node test/sqlformat.test.js # 45 checks: tokenizing, layout, and never changing meaning
 node test/csv.test.js      # 35 checks: CSV round trips, JSON/SQL/Markdown export
 node test/tunnel.test.js   # 19 checks: forwarding against a real in-process SSH server
 node test/sshdb.test.js    # 13 checks: Postgres through a tunnel - query, cancel, commit
@@ -233,6 +242,7 @@ node test/schemaui.js     # the sidebar menu, the live SQL preview, the change l
 node test/transferui.js   # every export format, and a CSV import that rolls back
 node test/sshui.js        # the tunnel dialog, and the app connecting through a jump box
 node test/enginesui.js    # the engine picker, MySQL end to end, server activity
+node test/formatui.js     # formatting one statement, a script, and what it leaves alone
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -263,6 +273,7 @@ src/shared/
   whereclause.js  validation for a hand-written filter expression
   valueview.js  classifying and formatting one cell value
   ddl.js        the SQL the schema actions generate
+  sqlformat.js  tokenizer and layout, guaranteed not to change meaning
   csv.js        a real CSV parser and writer
   exporters.js  a result as CSV, TSV, JSON, SQL or Markdown
   sqlkind.js    whether a statement only reads
