@@ -40,7 +40,9 @@ class Store {
 
   load() {
     try {
-      const raw = fs.readFileSync(this.file, 'utf8');
+      // A byte order mark makes JSON.parse throw, and an editor on Windows will
+      // happily add one. Losing every saved connection to that is not acceptable.
+      const raw = fs.readFileSync(this.file, 'utf8').replace(/^﻿/, '');
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
         this.data = { connections: [], workspace: null, seenVersion: null, ...parsed };

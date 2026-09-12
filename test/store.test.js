@@ -217,6 +217,17 @@ test('workspace state persists separately', () => {
   assert.strictEqual(new Store('conns.json').getWorkspace().tabs[0].sql, 'select 1');
 });
 
+test('a byte order mark does not wipe the connections', () => {
+  const s = fresh();
+  s.upsert({ name: 'Keeper', host: 'db' });
+  const file = path.join(dir, 'conns.json');
+  // What an editor on Windows leaves behind after a hand edit.
+  fs.writeFileSync(file, '﻿' + fs.readFileSync(file, 'utf8'), 'utf8');
+  const reopened = new Store('conns.json');
+  assert.strictEqual(reopened.list().length, 1, 'still there');
+  assert.strictEqual(reopened.list()[0].name, 'Keeper');
+});
+
 test('a corrupt file does not take the app down', () => {
   fresh();
   fs.writeFileSync(path.join(dir, 'conns.json'), '{ not json');
