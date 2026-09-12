@@ -3,6 +3,22 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.16.0 — SSH tunnels
+*2026-09-13*
+
+Reach a database that is only reachable from a jump box.
+
+### Added
+- A connection can go through an SSH tunnel: tick the box in the connection dialog and give the jump host, user and either a password or a private key. The database host and port stay as the jump box sees them. Test tests the tunnel too.
+- The SSH password and key passphrase are encrypted with the OS keychain alongside the database password and never reach the window, which is only told that one exists. A tunnel you turn off keeps what you typed in case you turn it back on, and duplicating a connection copies it.
+
+### Changed
+- The local end of a tunnel binds to 127.0.0.1 and nothing else. The default, if you pass no address, is every interface - which would publish a production database to whatever network the laptop is on, with no password of its own. A test asserts the bound address.
+- ssh2 errors are accurate and unhelpful, so they are rewritten into what to do about them: a rejected password, a host that does not resolve, a .ppk that needs converting, a jump box that cannot reach the database. The original is kept on the error rather than discarded.
+
+### Fixed
+- A connection that failed at startup could leave the window unusable. An SSH failure also mentions a password, which was matching the test for a database password failure and opening a password prompt that nobody was there to answer. SSH failures are now told apart, and one connection failing no longer stops the others or the rest of startup.
+
 ## 0.15.0 — Data in and out
 *2026-09-13*
 

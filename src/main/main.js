@@ -392,6 +392,14 @@ handle('file:openText', async ({ label = 'CSV', extensions = ['csv', 'tsv', 'txt
   return { path: file, name: path.basename(file), bytes: size, text: fs.readFileSync(file, 'utf8') };
 });
 
+handle('file:pickFile', async ({ label = 'File', extensions = ['*'] } = {}) => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'showHiddenFiles'],   // ~/.ssh is hidden on macOS
+    filters: [{ name: label, extensions }],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+
 handle('dialog:confirm', async ({ title, message, detail, confirmLabel, destructive }) => {
   const r = await dialog.showMessageBox(win, {
     type: destructive ? 'warning' : 'question',

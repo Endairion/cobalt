@@ -1234,3 +1234,16 @@ tr.best .bar-fill { background: var(--green); }
   color: var(--red); border: 1px solid rgba(242, 105, 92, .4); background: rgba(242, 105, 92, .08);
 }
 .im-error strong { color: var(--red); }
+
+/* ------------------------------ ssh tunnel ------------------------------ */
+
+.ssh-toggle { margin-top: 2px; }
+.ssh-block {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-sunken);
+}
+.pickrow { display: flex; gap: 6px; align-items: center; }
+.pickrow input { flex: 1 1 auto; min-width: 0; }
+.conn-via { color: var(--text-faint); font-size: 11px; }

@@ -238,6 +238,70 @@ test('a corrupt file does not take the app down', () => {
   assert.ok(rec.id);
 });
 
+test('an SSH block is stored and read back', () => {
+  const s = fresh();
+  const rec = s.upsert({
+    name: 'Behind a bastion', host: 'db.internal', port: 5432,
+    ssh: { enabled: true, host: 'jump.example.com', port: 2222, user: 'deploy', auth: 'key', keyPath: '/home/me/.ssh/id' },
+    sshPassphrase: 'phrase',
+  });
+  assert.strictEqual(rec.ssh.host, 'jump.example.com');
+  assert.strictEqual(rec.ssh.port, 2222);
+  assert.strictEqual(rec.ssh.auth, 'key');
+  const full = s.resolve(rec.id);
+  assert.strictEqual(full.ssh.passphrase, 'phrase', 'the main process gets the secret');
+});
+
+test('SSH secrets never reach the renderer, only a flag that they exist', () => {
+  const s = fresh();
+  const rec = s.upsert({
+    name: 'Jump', host: 'db',
+    ssh: { enabled: true, host: 'j', user: 'u' },
+    sshPassword: 'jumpsecret',
+  });
+  assert.strictEqual(rec.hasSshPassword, true);
+  assert.strictEqual(rec.sshPassword, undefined);
+  assert.ok(!JSON.stringify(s.list()).includes('jumpsecret'), 'the list must not carry it');
+});
+
+test('a blank SSH secret leaves the stored one alone, an empty string clears it', () => {
+  const s = fresh();
+  const rec = s.upsert({ name: 'J', host: 'db', ssh: { enabled: true, host: 'j', user: 'u' }, sshPassword: 'keepme' });
+  s.upsert({ id: rec.id, name: 'J renamed', host: 'db', ssh: { enabled: true, host: 'j', user: 'u' } });
+  assert.strictEqual(s.resolve(rec.id).ssh.password, 'keepme', 'untouched when not supplied');
+  s.upsert({ id: rec.id, name: 'J', host: 'db', ssh: { enabled: true, host: 'j', user: 'u' }, sshPassword: '' });
+  assert.strictEqual(s.list().find((c) => c.id === rec.id).hasSshPassword, false, 'cleared when blanked');
+});
+
+test('turning the tunnel off keeps what was typed, in case it goes back on', () => {
+  const s = fresh();
+  const rec = s.upsert({ name: 'J', host: 'db', ssh: { enabled: true, host: 'jump', port: 2222, user: 'me' } });
+  const off = s.upsert({ id: rec.id, name: 'J', host: 'db', ssh: { enabled: false, host: 'jump', port: 2222, user: 'me' } });
+  assert.strictEqual(off.ssh.enabled, false);
+  assert.strictEqual(off.ssh.host, 'jump');
+  // And a disabled tunnel is not handed to the connection layer as one.
+  assert.strictEqual(s.resolve(rec.id).ssh.password, undefined);
+});
+
+test('a connection with no tunnel has none', () => {
+  const s = fresh();
+  const rec = s.upsert({ name: 'Plain', host: 'db' });
+  assert.strictEqual(rec.ssh, null);
+  assert.strictEqual(s.resolve(rec.id).ssh, null);
+});
+
+test('duplicating a connection copies the tunnel and its secrets', () => {
+  const s = fresh();
+  const rec = s.upsert({
+    name: 'Prod', host: 'db',
+    ssh: { enabled: true, host: 'jump', user: 'me' }, sshPassword: 'jumpsecret',
+  });
+  const copy = s.duplicate(rec.id);
+  assert.strictEqual(copy.ssh.host, 'jump');
+  assert.strictEqual(copy.hasSshPassword, true);
+  assert.strictEqual(s.resolve(copy.id).ssh.password, 'jumpsecret');
+});
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

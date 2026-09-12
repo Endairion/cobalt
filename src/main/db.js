@@ -5,6 +5,7 @@ const { splitStatements } = require('./sqlsplit');
 const { summarize, compare } = require('../shared/stats');
 const { isReadOnlyStatement } = require('../shared/sqlkind');
 const { validateWhere } = require('../shared/whereclause');
+const { Tunnel } = require('./tunnel');
 
 /* ------------------------------------------------------------------ *
  * Type handling
@@ -67,13 +68,18 @@ class Connection {
     this.sessions = new Map();
     this.serverVersion = null;
     this.currentDatabase = null;
+    this.tunnel = null;
+    this.endpoint = null;   // where the driver actually dials, tunnel or not
   }
 
   clientConfig() {
     const c = this.config;
+    // With a tunnel up, everything connects to the local end of it. Sessions and
+    // the cancel side-channel go through here too, so they follow automatically.
+    const at = this.endpoint || { host: c.host || 'localhost', port: Number(c.port) || 5432 };
     const cfg = {
-      host: c.host || 'localhost',
-      port: Number(c.port) || 5432,
+      host: at.host,
+      port: at.port,
       database: c.database || 'postgres',
       user: c.user || undefined,
       password: c.password || undefined,
@@ -87,12 +93,33 @@ class Connection {
     return cfg;
   }
 
+  /** Bring up the SSH tunnel, if this connection goes through one. */
+  async openTunnel() {
+    const ssh = this.config.ssh;
+    if (!ssh || !ssh.enabled) return;
+    this.tunnel = new Tunnel(ssh);
+    this.endpoint = await this.tunnel.open({
+      host: this.config.host || 'localhost',
+      port: Number(this.config.port) || 5432,
+    });
+  }
+
   async connect() {
+    await this.openTunnel();
     this.pool = new Pool({ ...this.clientConfig(), max: 4, idleTimeoutMillis: 30000 });
     this.pool.on('error', () => { /* idle client dropped; pool replaces it */ });
-    const r = await this.pool.query(
-      "select current_database() as db, version() as version, current_setting('server_version') as sv"
-    );
+    let r;
+    try {
+      r = await this.pool.query(
+        "select current_database() as db, version() as version, current_setting('server_version') as sv"
+      );
+    } catch (err) {
+      // Through a tunnel, a driver-level failure is usually the tunnel's fault
+      // and its message says nothing useful about why.
+      const why = this.tunnel && this.tunnel.reason();
+      if (why) { const e = new Error(`${why} (connecting to ${this.config.host}:${this.config.port} through ${this.tunnel.describe()})`); e.cause = err; throw e; }
+      throw err;
+    }
     this.currentDatabase = r.rows[0].db;
     this.serverVersion = r.rows[0].sv;
     return { database: this.currentDatabase, serverVersion: this.serverVersion, banner: r.rows[0].version };
@@ -113,6 +140,8 @@ class Connection {
     for (const s of this.sessions.values()) await s.close();
     this.sessions.clear();
     if (this.pool) { try { await this.pool.end(); } catch { /* noop */ } this.pool = null; }
+    // The tunnel goes last: the pool's sockets run through it.
+    if (this.tunnel) { await this.tunnel.close(); this.tunnel = null; this.endpoint = null; }
   }
 
   /** Cancel the statement running on a tab's backend, from a side connection. */

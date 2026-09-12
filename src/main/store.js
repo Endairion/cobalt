@@ -29,9 +29,11 @@ class Store {
     if (!safeStorage.isEncryptionAvailable()) return 0;
     let upgraded = 0;
     for (const c of this.data.connections) {
-      if (c.password && c.password.plain) {
-        c.password = this.encrypt(c.password.plain);
-        upgraded++;
+      for (const field of SECRET_FIELDS) {
+        if (c[field] && c[field].plain) {
+          c[field] = this.encrypt(c[field].plain);
+          upgraded++;
+        }
       }
     }
     if (upgraded) this.save();
@@ -80,8 +82,13 @@ class Store {
       .map((c, i) => ({ ...c, order: typeof c.order === 'number' ? c.order : i }))
       .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
       .map((c) => {
-        const { password, ...rest } = c;
-        return { ...rest, hasPassword: !!password };
+        const { password, sshPassword, sshPassphrase, ...rest } = c;
+        return {
+          ...rest,
+          hasPassword: !!password,
+          hasSshPassword: !!sshPassword,
+          hasSshPassphrase: !!sshPassphrase,
+        };
       });
   }
 
@@ -101,7 +108,17 @@ class Store {
   resolve(id) {
     const c = this.find(id);
     if (!c) return null;
-    const { password, ...rest } = c;
+    const { password, sshPassword, sshPassphrase, ...rest } = c;
+
+    // The SSH secrets travel inside config.ssh, which is what Tunnel wants.
+    if (rest.ssh && rest.ssh.enabled) {
+      rest.ssh = {
+        ...rest.ssh,
+        password: this.decrypt(sshPassword),
+        passphrase: this.decrypt(sshPassphrase),
+      };
+    }
+
     if (password && password.enc) {
       try {
         return {
@@ -133,16 +150,20 @@ class Store {
       order: typeof record.order === 'number'
         ? record.order
         : (existing && typeof existing.order === 'number' ? existing.order : this.data.connections.length),
+      ssh: normalizeSshRecord(record.ssh, existing && existing.ssh),
       password: existing ? existing.password : null,
+      sshPassword: existing ? existing.sshPassword : null,
+      sshPassphrase: existing ? existing.sshPassphrase : null,
     };
-    // An undefined password means "leave it alone"; '' means "clear it".
+    // An undefined secret means "leave it alone"; '' means "clear it".
     if (record.password !== undefined) next.password = this.encrypt(record.password);
+    if (record.sshPassword !== undefined) next.sshPassword = this.encrypt(record.sshPassword);
+    if (record.sshPassphrase !== undefined) next.sshPassphrase = this.encrypt(record.sshPassphrase);
 
     if (existing) Object.assign(existing, next);
     else this.data.connections.push(next);
     this.save();
-    const { password, ...rest } = next;
-    return { ...rest, hasPassword: !!next.password };
+    return this.list().find((c) => c.id === id);
   }
 
   remove(id) {
@@ -164,8 +185,7 @@ class Store {
     this.data.connections.push(copy);
     this.normalizeOrder();
     this.save();
-    const { password, ...rest } = copy;
-    return { ...rest, hasPassword: !!copy.password };
+    return this.list().find((c) => c.id === copy.id);
   }
 
   /** Persist an explicit display order from a list of ids. */
@@ -203,6 +223,27 @@ class Store {
   }
 }
 
+/** Every field whose value is a secret and never leaves the main process. */
+const SECRET_FIELDS = ['password', 'sshPassword', 'sshPassphrase'];
+
+/**
+ * The jump-host half of a connection record. Absent or disabled both mean "no
+ * tunnel"; the rest is kept either way so turning it off and on again does not
+ * lose what you typed.
+ */
+function normalizeSshRecord(incoming, existing) {
+  const src = incoming === undefined ? existing : incoming;
+  if (!src) return null;
+  return {
+    enabled: !!src.enabled,
+    host: String(src.host || '').trim(),
+    port: Number(src.port) || 22,
+    user: String(src.user || '').trim(),
+    auth: src.auth === 'key' ? 'key' : 'password',
+    keyPath: String(src.keyPath || '').trim(),
+  };
+}
+
 /** "Local" -> "Local copy" -> "Local copy 2" … */
 function nextCopyName(name, taken) {
   const base = /(.*) copy( \d+)?$/.exec(name);
@@ -213,4 +254,4 @@ function nextCopyName(name, taken) {
   return candidate;
 }
 
-module.exports = { Store, nextCopyName };
+module.exports = { Store, nextCopyName, normalizeSshRecord, SECRET_FIELDS };

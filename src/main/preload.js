@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('cobalt', {
     saveCsv: (name, text) => call('file:saveCsv', name, text),
     saveText: (name, text, opts) => call('file:saveText', name, text, opts),
     openText: (opts) => call('file:openText', opts),
+    pickFile: (opts) => call('file:pickFile', opts),
   },
   ui: {
     confirm: (opts) => call('dialog:confirm', opts),

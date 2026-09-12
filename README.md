@@ -35,7 +35,15 @@ connection read-only to disable grid editing against production — that flag is
 enforced in the main process, not just by hiding buttons, so a write is refused even
 if the renderer asks for one.
 
-**Query editor.** SQL syntax highlighting, autocomplete fed from the live schema
+**SSH tunnels.** A connection can go through a jump box: tick the box in the connection
+dialog and give the SSH host, user and either a password or a private key. The database
+host and port stay as the jump box sees them, and Test exercises the tunnel too. The
+local end binds to `127.0.0.1` only - the default of every interface would publish the
+database to whatever network the laptop is on - and there is a test asserting that. SSH
+secrets are encrypted through `safeStorage` like the database password and never reach
+the renderer.
+
+**Query editor. SQL syntax highlighting, autocomplete fed from the live schema
 (tables, and columns per table), bracket matching, multi-cursor, search, fold.
 The statement under the caret is tinted, and that is exactly what `Ctrl+Enter` runs —
 with a selection, it runs the selection instead. Each tab keeps its own undo history.
@@ -186,6 +194,8 @@ node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
 node test/where.test.js    # 18 checks: what an expression may contain, and may not
 node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
 node test/csv.test.js      # 35 checks: CSV round trips, JSON/SQL/Markdown export
+node test/tunnel.test.js   # 19 checks: forwarding against a real in-process SSH server
+node test/sshdb.test.js    # 13 checks: Postgres through a tunnel - query, cancel, commit
 node test/value.test.js    # 33 checks: JSON that survives pretty-printing, hex dumps
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
@@ -205,6 +215,7 @@ node test/reconnectui.js  # startup reopens what was connected
 node test/inspectorui.js  # the value panel: JSON, binary, the row view, staging an edit
 node test/schemaui.js     # the sidebar menu, the live SQL preview, the change landing
 node test/transferui.js   # every export format, and a CSV import that rolls back
+node test/sshui.js        # the tunnel dialog, and the app connecting through a jump box
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -244,6 +255,7 @@ src/main/
   db.js         pools, per-tab sessions, result metadata, transactional commits
   sqlsplit.js   statement splitter (shared with the renderer)
   store.js      saved connections + workspace, safeStorage encryption
+  tunnel.js     SSH port forwarding, bound to loopback only
 src/renderer/
   app.js        state, sidebar, tabs, results, dialogs, palette
   connections.js  connection manager, row menu, tab connection picker
@@ -262,6 +274,6 @@ src/renderer/
 
 ## Not built yet
 
-SSH tunnels, OR between filters, saved snippets, a full object browser (functions,
+OR between filters, saved snippets, a full object browser (functions,
 sequences, triggers), a process list, ERD, `EXPLAIN` visualization, other engines. The driver
 seam is `src/main/db.js`; the renderer never speaks Postgres directly.

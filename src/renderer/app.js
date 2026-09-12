@@ -318,12 +318,19 @@ async function connect(savedId, overrides) {
     renderStatus();
     return info.id;
   } catch (err) {
-    if (/password|authentication/i.test(err.message || '')) {
+    const message = err.message || '';
+    // An SSH failure also says "password", and asking for the database password
+    // would be both the wrong question and — at startup, where nobody is there
+    // to answer — a modal the app never gets past.
+    const isSsh = message.startsWith('SSH:');
+    if (!isSsh && /password|authentication/i.test(message)) {
       const pw = await promptPassword(saved ? saved.name : 'connection');
       if (pw != null) return connect(savedId, { password: pw });
     }
-    toast(`Connect failed: ${err.message}`, 'err');
-    setStatus('');
+    toast(`Connect failed: ${message}`, 'err');
+    setStatus(message);
+    state.lastConnectError = message;
+    renderSidebar();
     return null;
   }
 }
@@ -1926,6 +1933,8 @@ function showOverlay(node, { onClose } = {}) {
 
 function openConnectionDialog(record) {
   const r = record || { name: '', host: 'localhost', port: 5432, database: 'postgres', user: '', ssl: 'disable', readOnly: false };
+  const ssh = r.ssh || { enabled: false, host: '', port: 22, user: '', auth: 'password', keyPath: '' };
+  const sshOn = !!ssh.enabled;
   const node = document.createElement('div');
   node.className = 'modal';
   node.innerHTML = `
@@ -1954,6 +1963,46 @@ function openConnectionDialog(record) {
         <input id="f-ro" type="checkbox" ${r.readOnly ? 'checked' : ''} style="width:auto" />
         <label for="f-ro" style="cursor:pointer">Treat as read-only (disable grid editing)</label>
       </div>
+
+      <label class="op-check ssh-toggle">
+        <input id="f-ssh" type="checkbox" ${sshOn ? 'checked' : ''} />
+        <span>Connect through an SSH tunnel</span>
+        <span class="hint">the host and port above are as the jump box sees them</span>
+      </label>
+
+      <div class="ssh-block" id="f-ssh-block" ${sshOn ? '' : 'hidden'}>
+        <div class="row3">
+          <div class="field"><label>SSH host</label><input id="f-ssh-host" value="${esc(ssh.host)}" placeholder="bastion.example.com" /></div>
+          <div class="field"><label>SSH port</label><input id="f-ssh-port" value="${esc(ssh.port || 22)}" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>SSH user</label><input id="f-ssh-user" value="${esc(ssh.user)}" /></div>
+          <div class="field"><label>Authenticate with</label>
+            <select id="f-ssh-auth">
+              <option value="password"${ssh.auth !== 'key' ? ' selected' : ''}>password</option>
+              <option value="key"${ssh.auth === 'key' ? ' selected' : ''}>private key</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="f-ssh-passrow" ${ssh.auth === 'key' ? 'hidden' : ''}>
+          <label>SSH password${r.hasSshPassword ? ' (stored — leave blank to keep)' : ''}</label>
+          <input id="f-ssh-pass" type="password" value="" />
+        </div>
+        <div id="f-ssh-keyrow" ${ssh.auth === 'key' ? '' : 'hidden'}>
+          <div class="field">
+            <label>Private key</label>
+            <div class="pickrow">
+              <input id="f-ssh-key" value="${esc(ssh.keyPath)}" placeholder="C:/Users/you/.ssh/id_ed25519" spellcheck="false" />
+              <button class="btn small" id="f-ssh-browse" type="button">Browse…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Key passphrase${r.hasSshPassphrase ? ' (stored — leave blank to keep)' : ''}</label>
+            <input id="f-ssh-phrase" type="password" value="" />
+          </div>
+        </div>
+      </div>
+
       <div class="form-msg" id="f-msg"></div>
     </div>
     <div class="foot">
@@ -1978,6 +2027,27 @@ function openConnectionDialog(record) {
     password: g('f-pass').value,
     ssl: g('f-ssl').value,
     readOnly: g('f-ro').checked,
+    ssh: {
+      enabled: g('f-ssh').checked,
+      host: g('f-ssh-host').value.trim(),
+      port: Number(g('f-ssh-port').value) || 22,
+      user: g('f-ssh-user').value.trim(),
+      auth: g('f-ssh-auth').value,
+      keyPath: g('f-ssh-key').value.trim(),
+    },
+    sshPassword: g('f-ssh-pass').value,
+    sshPassphrase: g('f-ssh-phrase').value,
+  });
+
+  g('f-ssh').addEventListener('change', (e) => { g('f-ssh-block').hidden = !e.target.checked; });
+  g('f-ssh-auth').addEventListener('change', (e) => {
+    const byKey = e.target.value === 'key';
+    g('f-ssh-keyrow').hidden = !byKey;
+    g('f-ssh-passrow').hidden = byKey;
+  });
+  g('f-ssh-browse').addEventListener('click', async () => {
+    const picked = await api.files.pickFile({ label: 'Private key', extensions: ['*'] });
+    if (picked) g('f-ssh-key').value = picked;
   });
 
   g('f-test').addEventListener('click', async () => {
@@ -1995,8 +2065,10 @@ function openConnectionDialog(record) {
 
   g('f-save').addEventListener('click', async () => {
     const data = collect();
-    // Blank password on an existing record means "keep the stored one".
+    // Blank secrets on an existing record mean "keep the stored ones".
     if (record && data.password === '') delete data.password;
+    if (record && data.sshPassword === '') delete data.sshPassword;
+    if (record && data.sshPassphrase === '') delete data.sshPassphrase;
     try {
       const savedRec = await api.connections.save(data);
       await refreshSaved();
@@ -2245,15 +2317,22 @@ async function restoreConnections(ws) {
   const wanted = (ws && Array.isArray(ws.openConnections) ? ws.openConnections : [])
     .filter((id) => state.saved.some((sv) => sv.id === id));
 
+  // One connection failing must not stop the others, and must not stop the
+  // window from finishing its startup.
+  const tryConnect = async (savedId) => {
+    try { return await connect(savedId); }
+    catch (err) { toast(`Connect failed: ${err.message}`, 'err'); return null; }
+  };
+
   if (wanted.length) {
-    for (const savedId of wanted) await connect(savedId);
+    for (const savedId of wanted) await tryConnect(savedId);
     const active = ws.activeSavedId ? liveFor(ws.activeSavedId) : null;
     if (active) focusConnection(active.id, { bindTab: false });
   } else if (state.saved.length) {
     // Nothing remembered yet: open the first one rather than starting with no
     // database, which leaves every command refusing and looks like a fault.
     // From here on the set that was open is restored instead.
-    await connect(state.saved[0].id);
+    await tryConnect(state.saved[0].id);
   }
 
   // Give every tab a connection: its own if it remembers one, else the active.

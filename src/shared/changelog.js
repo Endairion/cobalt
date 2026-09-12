@@ -13,6 +13,19 @@
 
 const releases = [
   {
+    version: '0.16.0',
+    date: '2026-09-13',
+    title: 'SSH tunnels',
+    summary: 'Reach a database that is only reachable from a jump box.',
+    changes: [
+      { type: 'added', text: 'A connection can go through an SSH tunnel: tick the box in the connection dialog and give the jump host, user and either a password or a private key. The database host and port stay as the jump box sees them. Test tests the tunnel too.' },
+      { type: 'added', text: 'The SSH password and key passphrase are encrypted with the OS keychain alongside the database password and never reach the window, which is only told that one exists. A tunnel you turn off keeps what you typed in case you turn it back on, and duplicating a connection copies it.' },
+      { type: 'changed', text: 'The local end of a tunnel binds to 127.0.0.1 and nothing else. The default, if you pass no address, is every interface - which would publish a production database to whatever network the laptop is on, with no password of its own. A test asserts the bound address.' },
+      { type: 'changed', text: 'ssh2 errors are accurate and unhelpful, so they are rewritten into what to do about them: a rejected password, a host that does not resolve, a .ppk that needs converting, a jump box that cannot reach the database. The original is kept on the error rather than discarded.' },
+      { type: 'fixed', text: 'A connection that failed at startup could leave the window unusable. An SSH failure also mentions a password, which was matching the test for a database password failure and opening a password prompt that nobody was there to answer. SSH failures are now told apart, and one connection failing no longer stops the others or the rest of startup.' },
+    ],
+  },
+  {
     version: '0.15.0',
     date: '2026-09-13',
     title: 'Data in and out',
