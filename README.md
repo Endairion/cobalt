@@ -1,6 +1,6 @@
 # Cobalt
 
-A fast PostgreSQL editor in the spirit of TablePlus — Electron shell, CodeMirror 6
+A fast SQL editor in the spirit of TablePlus — Electron shell, CodeMirror 6
 editor, virtualized editable results grid.
 
 ```bash
@@ -35,7 +35,17 @@ connection read-only to disable grid editing against production — that flag is
 enforced in the main process, not just by hiding buttons, so a write is refused even
 if the renderer asks for one.
 
-**SSH tunnels.** A connection can go through a jump box: tick the box in the connection
+**Engines.** PostgreSQL and MySQL/MariaDB. Pick one in the connection dialog; everything
+else is the same - browsing, the editable grid, paging, filtering, foreign keys, the value
+inspector, export and import. MySQL has no schemas, so the connected database fills that
+slot and the tree keeps its three levels. Everything engine-specific lives in
+`src/main/drivers`; adding another means adding a file there and nothing in the renderer.
+
+**Server activity.** `Ctrl+Shift+L` lists what the server is doing - who is connected,
+what each is running, for how long. Cancel stops a statement, Kill closes the connection,
+both after confirming. Your own connection is marked and has no kill button.
+
+**SSH tunnels. A connection can go through a jump box: tick the box in the connection
 dialog and give the SSH host, user and either a password or a private key. The database
 host and port stay as the jump box sees them, and Test exercises the tunnel too. The
 local end binds to `127.0.0.1` only - the default of every interface would publish the
@@ -165,6 +175,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+Shift+F` | Toggle the filter row |
 | `Ctrl+I` | Value inspector |
 | `Ctrl+Shift+X` | Export the result |
+| `Ctrl+Shift+L` | Server activity |
 | `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
 | `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
@@ -183,6 +194,10 @@ docker run -d --name cobalt-test-pg -e POSTGRES_PASSWORD=cobalt -e POSTGRES_USER
   -e POSTGRES_DB=cobalt -p 15432:5432 postgres:16-alpine
 docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
+docker run -d --name cobalt-test-mysql -e MYSQL_ROOT_PASSWORD=cobalt -e MYSQL_USER=cobalt \
+  -e MYSQL_PASSWORD=cobalt -e MYSQL_DATABASE=cobalt -p 13306:3306 mysql:8
+docker exec -i cobalt-test-mysql mysql -ucobalt -pcobalt cobalt < test/seed-mysql.sql
+
 node test/commands.test.js # 10 checks: every menu item is wired, no dead entries
 node test/version.test.js  # 10 checks: changelog data, CHANGELOG.md sync, git tags
 node test/store.test.js    # 12 checks: ordering, duplication, password handling
@@ -196,6 +211,7 @@ node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
 node test/csv.test.js      # 35 checks: CSV round trips, JSON/SQL/Markdown export
 node test/tunnel.test.js   # 19 checks: forwarding against a real in-process SSH server
 node test/sshdb.test.js    # 13 checks: Postgres through a tunnel - query, cancel, commit
+node test/mysql.test.js    # 36 checks: the MySQL driver against a real server
 node test/value.test.js    # 33 checks: JSON that survives pretty-printing, hex dumps
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
@@ -216,6 +232,7 @@ node test/inspectorui.js  # the value panel: JSON, binary, the row view, staging
 node test/schemaui.js     # the sidebar menu, the live SQL preview, the change landing
 node test/transferui.js   # every export format, and a CSV import that rolls back
 node test/sshui.js        # the tunnel dialog, and the app connecting through a jump box
+node test/enginesui.js    # the engine picker, MySQL end to end, server activity
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -253,6 +270,7 @@ src/main/
   main.js       window, menu, IPC surface, smoke mode
   history.js    append-only query history
   db.js         pools, per-tab sessions, result metadata, transactional commits
+  drivers/      one file per engine: catalogs, quoting, placeholders, editability
   sqlsplit.js   statement splitter (shared with the renderer)
   store.js      saved connections + workspace, safeStorage encryption
   tunnel.js     SSH port forwarding, bound to loopback only
@@ -269,11 +287,13 @@ src/renderer/
   inspector.js  the value panel beside the grid
   schemaops.js  schema action dialogs, with a live SQL preview
   transfer.js   the export dialog and the CSV import dialog
+  processes.js  the server activity panel
   filter.js     filter expression parser
 ```
 
 ## Not built yet
 
 OR between filters, saved snippets, a full object browser (functions,
-sequences, triggers), a process list, ERD, `EXPLAIN` visualization, other engines. The driver
+sequences, triggers), ERD, SQLite. A MySQL `EXPLAIN` is shown as text rather than as a
+plan tree, which is built for Postgres. The driver
 seam is `src/main/db.js`; the renderer never speaks Postgres directly.

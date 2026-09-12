@@ -198,7 +198,7 @@ export function openConnectionManager(selectId) {
       if ($('c-pass').value) data.password = $('c-pass').value;
       try {
         const info = await ctx.test(data);
-        msg(`OK — PostgreSQL ${info.serverVersion}, database "${info.database}".`, 'ok');
+        msg(`OK — ${info.engineLabel || 'PostgreSQL'} ${info.serverVersion}, database "${info.database}".`, 'ok');
       } catch (err) { msg(err.message, 'err'); }
     });
 

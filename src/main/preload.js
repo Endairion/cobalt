@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('cobalt', {
     ddl: (id, schema, table) => call('conn:ddl', id, schema, table),
     runDdl: (id, sql) => call('conn:runDdl', id, sql),
     importRows: (id, spec) => call('conn:import', id, spec),
+    processList: (id) => call('conn:processList', id),
+    killQuery: (id, pid, opts) => call('conn:killQuery', id, pid, opts),
     fks: (id) => call('conn:fks', id),
     stats: (id, schema, table) => call('conn:stats', id, schema, table),
   },
@@ -55,6 +57,7 @@ contextBridge.exposeInMainWorld('cobalt', {
     },
   },
   app: {
+    engines: () => call('app:engines'),
     info: () => call('app:info'),
     role: (name) => call('app:role', name),
     unseenReleases: () => call('app:unseenReleases'),

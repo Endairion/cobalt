@@ -136,12 +136,15 @@ class Store {
   upsert(record) {
     const id = record.id || `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const existing = this.find(id);
+    const engine = String(record.engine || (existing && existing.engine) || 'postgres');
     const next = {
       id,
       name: record.name || 'Untitled',
+      engine,
       host: record.host || 'localhost',
-      port: Number(record.port) || 5432,
-      database: record.database || 'postgres',
+      port: Number(record.port) || (engine === 'mysql' ? 3306 : 5432),
+      // MySQL has no default database to fall back on; Postgres always has one.
+      database: record.database || (engine === 'mysql' ? '' : 'postgres'),
       user: record.user || '',
       ssl: record.ssl || 'disable',
       color: record.color || null,

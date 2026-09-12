@@ -177,4 +177,68 @@ check('a name that needs quoting is allowed — it just gets quoted', () => {
     'alter table s.t\n  add column "select" text;');
 });
 
+console.log('\nthe same actions on MySQL');
+
+const my = { engine: 'mysql', schema: 'shop', table: 'customers' };
+
+check('identifiers are backquoted, and only when they need to be', () => {
+  const qm = d.quoterFor('mysql');
+  assert.strictEqual(qm('email'), 'email');
+  assert.strictEqual(qm('order'), '`order`');
+  assert.strictEqual(qm('my col'), '`my col`');
+  assert.strictEqual(qm('we`ird'), '`we``ird`');
+});
+
+// MySQL wants NOT NULL before DEFAULT; Postgres takes either order.
+check('adding a column puts NOT NULL where MySQL wants it', () => {
+  assert.strictEqual(
+    d.addColumn({ ...my, name: 'tier', type: 'varchar(32)', defaultExpr: "'basic'", notNull: true }),
+    "alter table shop.customers\n  add column tier varchar(32) not null default 'basic';");
+});
+
+// The one that would simply be a syntax error if Postgres syntax were emitted.
+check('changing a type is MODIFY COLUMN, not ALTER COLUMN ... TYPE', () => {
+  assert.strictEqual(
+    d.alterColumnType({ ...my, name: 'balance', type: 'decimal(14,4)' }),
+    'alter table shop.customers\n  modify column balance decimal(14,4);');
+});
+
+check('a USING cast is dropped rather than emitted where it is not legal', () => {
+  const sql = d.alterColumnType({ ...my, name: 'balance', type: 'char(20)', using: 'balance::text' });
+  assert.ok(!/using/.test(sql), sql);
+});
+
+check('NOT NULL restates the column, because MODIFY needs the type', () => {
+  assert.strictEqual(
+    d.setNotNull({ ...my, name: 'full_name', notNull: true, currentType: 'varchar(255)' }),
+    'alter table shop.customers\n  modify column full_name varchar(255) not null;');
+  assert.ok(d.setNotNull({ ...my, name: 'full_name', notNull: false, currentType: 'varchar(255)' })
+    .endsWith('varchar(255) null;'));
+});
+
+check('an index puts USING before the table', () => {
+  assert.strictEqual(
+    d.createIndex({ ...my, columns: ['email'], method: 'hash' }),
+    'create index customers_email_idx using hash\n  on shop.customers (email);');
+});
+
+check('CASCADE and CONCURRENTLY are left out where they do not exist', () => {
+  assert.strictEqual(d.dropTable({ ...my, cascade: true }), 'drop table shop.customers;');
+  assert.ok(!/cascade/.test(d.dropColumn({ ...my, name: 'notes', cascade: true })));
+  assert.ok(!/concurrently/.test(d.createIndex({ ...my, columns: ['email'], concurrently: true })));
+  assert.strictEqual(d.truncateTable({ ...my, restartIdentity: true, cascade: true }),
+    'truncate table shop.customers;');
+});
+
+check('what is the same on both stays the same', () => {
+  assert.strictEqual(d.renameColumn({ ...my, name: 'notes', to: 'memo' }),
+    'alter table shop.customers\n  rename column notes to memo;');
+  assert.strictEqual(d.setDefault({ ...my, name: 'balance', defaultExpr: '0' }),
+    'alter table shop.customers\n  alter column balance set default 0;');
+});
+
+check('a typed fragment is checked on either engine', () => {
+  throws(() => d.addColumn({ ...my, name: 'c', type: 'text; drop table x' }), /semicolon/i);
+});
+
 console.log(`\n${process.exitCode ? 'failures above' : `all ${n} checks passed`}\n`);

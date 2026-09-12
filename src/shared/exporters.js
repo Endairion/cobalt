@@ -13,7 +13,7 @@
  */
 
 const { toCsv } = require('./csv.js');
-const { q: qid } = require('./ddl.js');
+const { quoterFor } = require('./ddl.js');
 
 /** Column oids whose text is a JSON number, not a string. */
 const INT_OIDS = new Set([20, 21, 23, 26]);          // int8, int2, int4, oid
@@ -29,15 +29,31 @@ const isSafeNumber = (s) => {
   return String(Number(s)) === s;
 };
 
-/** One value, as a JSON fragment. */
+
+/**
+ * What class of value this column holds. Drivers report `kind` directly; the
+ * OID fallback is for results that predate it — and OIDs must not be consulted
+ * on another engine, where the same number means something else entirely.
+ */
+function kindOf(column = {}) {
+  if (column.kind) return column.kind;
+  const oid = column.dataTypeID;
+  if (oid === BOOL_OID) return 'bool';
+  if (JSON_OIDS.has(oid)) return 'json';
+  if (INT_OIDS.has(oid)) return 'int';
+  if (oid === NUMERIC_OID) return 'decimal';
+  if (FLOAT_OIDS.has(oid)) return 'float';
+  return 'text';
+}
+
 function jsonValue(v, column = {}) {
   if (v === null || v === undefined) return 'null';
   const s = String(v);
-  const oid = column.dataTypeID;
+  const kind = kindOf(column);
 
-  if (oid === BOOL_OID) return s === 't' || s === 'true' ? 'true' : 'false';
-  if (JSON_OIDS.has(oid)) return s;                      // already a document
-  if (INT_OIDS.has(oid) || oid === NUMERIC_OID || FLOAT_OIDS.has(oid)) {
+  if (kind === 'bool') return s === 't' || s === 'true' || s === '1' ? 'true' : 'false';
+  if (kind === 'json') return s;                         // already a document
+  if (kind === 'int' || kind === 'decimal' || kind === 'float') {
     // Emit the digits as written when JSON can hold them, quote them when it
     // cannot, rather than silently rounding.
     return isSafeNumber(s) ? s : JSON.stringify(s);
@@ -58,16 +74,19 @@ function toJson(columns, rows, { indent = 2 } = {}) {
 function sqlLiteral(v, column = {}) {
   if (v === null || v === undefined) return 'null';
   const s = String(v);
-  const oid = column.dataTypeID;
-  if (oid === BOOL_OID) return s === 't' || s === 'true' ? 'true' : 'false';
-  // Everything else is written as a quoted literal and left for Postgres to
+  const kind = kindOf(column);
+  if (kind === 'bool') return s === 't' || s === 'true' || s === '1' ? 'true' : 'false';
+  // Everything else is written as a quoted literal and left for the server to
   // cast on the way in — including numbers, so a numeric keeps its scale.
-  if (INT_OIDS.has(oid) && /^-?\d+$/.test(s)) return s;
+  if (kind === 'int' && /^-?\d+$/.test(s)) return s;
   return `'${s.replace(/'/g, "''")}'`;
 }
 
-function toSqlInserts(columns, rows, { schema = 'public', table = 'table_name', batch = 100 } = {}) {
+function toSqlInserts(columns, rows, { schema = 'public', table = 'table_name', batch = 100, engine = 'postgres' } = {}) {
   if (!rows.length) return `-- no rows\n`;
+  // Quote the way the engine you exported from does, so the statements can be
+  // pasted straight back into it.
+  const qid = quoterFor(engine);
   const rel = schema ? `${qid(schema)}.${qid(table)}` : qid(table);
   const cols = columns.map((c) => qid(c.name)).join(', ');
   const out = [];
@@ -111,4 +130,4 @@ function render(format, columns, rows, opts = {}) {
   }
 }
 
-module.exports = { render, FORMATS, toJson, toSqlInserts, toMarkdown, jsonValue, sqlLiteral, isSafeNumber };
+module.exports = { render, FORMATS, toJson, toSqlInserts, toMarkdown, jsonValue, sqlLiteral, isSafeNumber, kindOf };

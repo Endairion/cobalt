@@ -11,6 +11,7 @@ import * as appmenu from './appmenu.js';
 import * as inspector from './inspector.js';
 import * as schemaops from './schemaops.js';
 import * as transfer from './transfer.js';
+import * as processes from './processes.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -134,6 +135,7 @@ function newTab({ connId = state.activeConnId, title, sql = '', run = false, kin
     title: title || `Query ${nextQueryNumber()}`,
     editorState: editor.makeState(sql),
     results: [],
+    engines: [{ id: 'postgres', label: 'PostgreSQL', defaultPort: 5432, defaultDatabase: 'postgres' }],
     activeResult: 0,
     grid: null,
     running: false,
@@ -300,6 +302,9 @@ async function connect(savedId, overrides) {
       name: info.name,
       database: info.database,
       serverVersion: info.serverVersion,
+      engine: info.engine || 'postgres',
+      engineLabel: info.engineLabel || 'PostgreSQL',
+      hasSchemas: info.hasSchemas !== false,
       readOnly: !!info.readOnly,
       tree: null,
       expanded: new Set(),
@@ -313,7 +318,7 @@ async function connect(savedId, overrides) {
     if (t && !t.connId) t.connId = info.id;
     renderSidebar();
     await loadSchema(info.id);
-    toast(`Connected to ${info.name} · PostgreSQL ${info.serverVersion}`, 'ok');
+    toast(`Connected to ${info.name} · ${info.engineLabel || 'PostgreSQL'} ${info.serverVersion}`, 'ok');
     updateToolbar();
     renderStatus();
     return info.id;
@@ -457,7 +462,7 @@ function renderSidebar() {
   el.tree.innerHTML = out.join('') || '<div class="tree-empty">No matches.</div>';
   const act = state.conns.get(state.activeConnId);
   el.sidebarFoot.textContent = act
-    ? `${act.database} · PostgreSQL ${act.serverVersion}${needle ? ` · ${shownTotal} matches` : ''}`
+    ? `${act.database} · ${act.engineLabel || 'PostgreSQL'} ${act.serverVersion}${needle ? ` · ${shownTotal} matches` : ''}`
     : `${state.saved.length} saved · none connected`;
 }
 
@@ -474,6 +479,19 @@ function findColumn(conn, schema, table, colName) {
   const rel = findRelation(conn, schema, table);
   return rel ? rel.columns.find((c) => c.name === colName) || null : null;
 }
+
+processes.wire({
+  showOverlay: (node, opts) => showOverlay(node, opts),
+  list: (connId) => api.connections.processList(connId),
+  kill: (connId, pid, opts) => api.connections.killQuery(connId, pid, opts),
+  confirm: (opts) => api.ui.confirm(opts),
+  copy: (text) => api.ui.copy(text),
+  toast: (m, kind) => toast(m, kind),
+  connName: (connId) => {
+    const c = state.conns.get(connId);
+    return c ? `${c.name} · ${c.engineLabel || ''}` : '';
+  },
+});
 
 transfer.wire({
   showOverlay: (node) => showOverlay(node),
@@ -585,7 +603,10 @@ el.tree.addEventListener('contextmenu', async (e) => {
       { header: `${table}.${colName}` },
       { label: 'Copy name', run: () => { api.ui.copy(colName); toast('Copied.'); } },
       { sep: true },
-      ...schemaops.columnMenuItems({ connId: conn.id, schema, table, column, readOnly: !!conn.readOnly }),
+      ...schemaops.columnMenuItems({
+        connId: conn.id, schema, table, column,
+        readOnly: !!conn.readOnly, engine: conn.engine || 'postgres',
+      }),
     ], colRow);
     return;
   }
@@ -623,6 +644,7 @@ el.tree.addEventListener('contextmenu', async (e) => {
         kind: rel ? rel.kind : 'r',
         columns: rel ? rel.columns : [],
         readOnly: !!conn.readOnly,
+        engine: conn.engine || 'postgres',
       }),
     ], relRow);
     return;
@@ -1748,9 +1770,11 @@ function exportResult() {
   const columns = vis.map((i) => g.columns[i]);
   const rows = [];
   for (let d = 0; d < g.totalRows(); d++) rows.push(vis.map((c) => g.valueAt(d, c)));
+  const conn = state.conns.get(tab.connId);
   transfer.openExport({
     columns,
     rows,
+    engine: conn ? conn.engine : 'postgres',
     source: res && res.source,
     title: tab.title,
     hasMore: !!(tab.pageState && tab.pageState.hasMore),
@@ -1933,6 +1957,7 @@ function showOverlay(node, { onClose } = {}) {
 
 function openConnectionDialog(record) {
   const r = record || { name: '', host: 'localhost', port: 5432, database: 'postgres', user: '', ssl: 'disable', readOnly: false };
+  const engine = r.engine || 'postgres';
   const ssh = r.ssh || { enabled: false, host: '', port: 22, user: '', auth: 'password', keyPath: '' };
   const sshOn = !!ssh.enabled;
   const node = document.createElement('div');
@@ -1940,7 +1965,14 @@ function openConnectionDialog(record) {
   node.innerHTML = `
     <h2>${record ? 'Edit connection' : 'New connection'}</h2>
     <div class="body">
-      <div class="field"><label>Name</label><input id="f-name" value="${esc(r.name)}" placeholder="Local dev" /></div>
+      <div class="row2">
+        <div class="field"><label>Name</label><input id="f-name" value="${esc(r.name)}" placeholder="Local dev" /></div>
+        <div class="field"><label>Engine</label>
+          <select id="f-engine">
+            ${state.engines.map((e) => `<option value="${esc(e.id)}"${e.id === engine ? ' selected' : ''}>${esc(e.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
       <div class="row2">
         <div class="field"><label>Host</label><input id="f-host" value="${esc(r.host)}" /></div>
         <div class="field"><label>Port</label><input id="f-port" value="${esc(r.port)}" /></div>
@@ -2016,6 +2048,7 @@ function openConnectionDialog(record) {
   const close = showOverlay(node);
   const g = (id) => node.querySelector('#' + id);
   const msg = g('f-msg');
+  let engineNow = engine;
   const collect = () => ({
     id: record ? record.id : undefined,
     savedId: record ? record.id : undefined,
@@ -2026,6 +2059,7 @@ function openConnectionDialog(record) {
     user: g('f-user').value.trim(),
     password: g('f-pass').value,
     ssl: g('f-ssl').value,
+    engine: g('f-engine').value,
     readOnly: g('f-ro').checked,
     ssh: {
       enabled: g('f-ssh').checked,
@@ -2037,6 +2071,17 @@ function openConnectionDialog(record) {
     },
     sshPassword: g('f-ssh-pass').value,
     sshPassphrase: g('f-ssh-phrase').value,
+  });
+
+  // Switching engine moves the port and database to that engine's defaults,
+  // but only when they are still the previous engine's defaults — never over
+  // something typed.
+  g('f-engine').addEventListener('change', (e) => {
+    const was = state.engines.find((x) => x.id === engineNow) || {};
+    const now = state.engines.find((x) => x.id === e.target.value) || {};
+    if (String(g('f-port').value) === String(was.defaultPort)) g('f-port').value = now.defaultPort;
+    if (g('f-db').value === was.defaultDatabase) g('f-db').value = now.defaultDatabase;
+    engineNow = e.target.value;
   });
 
   g('f-ssh').addEventListener('change', (e) => { g('f-ssh-block').hidden = !e.target.checked; });
@@ -2056,7 +2101,7 @@ function openConnectionDialog(record) {
     try {
       const info = await api.connections.test(collect());
       msg.className = 'form-msg ok';
-      msg.textContent = `OK — PostgreSQL ${info.serverVersion}, database "${info.database}".`;
+      msg.textContent = `OK — ${info.engineLabel || 'PostgreSQL'} ${info.serverVersion}, database "${info.database}".`;
     } catch (err) {
       msg.className = 'form-msg err';
       msg.textContent = err.message;
@@ -2446,6 +2491,10 @@ function menuCommand(cmd) {
     case 'grid:inspect': toggleInspector(); break;
     case 'result:export': exportResult(); break;
     case 'history:open': history.openHistory(); break;
+    case 'server:processes':
+      if (state.activeConnId) processes.openProcessList(state.activeConnId);
+      else toast('Connect to a database first.', 'err');
+      break;
     case 'palette:tables': openTablePalette(); break;
     case 'palette:commands': openCommandPalette(); break;
     case 'focus:editor': editor.focus(); break;
@@ -2479,6 +2528,9 @@ async function boot() {
     state.appInfo = await api.app.info();
     renderVersionBadge();
   } catch { /* version panel simply stays blank */ }
+
+  try { state.engines = await api.app.engines(); }
+  catch { /* the built-in default is enough to open the dialog */ }
 
   await refreshSaved();
   const ws = await restoreWorkspace();

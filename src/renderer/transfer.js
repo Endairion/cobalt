@@ -38,7 +38,7 @@ const PREVIEW_LINES = 14;
  * columns: [{ name, dataTypeID }], rows: [[value|null]]
  * source:  { schema, table } when the result came from one table.
  */
-export function openExport({ columns, rows, source, title = 'result', hasMore = false }) {
+export function openExport({ columns, rows, source, title = 'result', hasMore = false, engine = 'postgres' }) {
   let format = 'csv';
 
   const node = document.createElement('div');
@@ -70,6 +70,7 @@ export function openExport({ columns, rows, source, title = 'result', hasMore = 
   const note = node.querySelector('#ex-note');
 
   const opts = () => ({
+    engine,
     schema: source ? source.schema : 'public',
     table: source ? source.table : (title || 'table_name').replace(/[^\w]+/g, '_'),
   });

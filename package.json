@@ -1,6 +1,6 @@
 {
   "name": "cobalt",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Cobalt - a fast PostgreSQL editor",
   "main": "src/main/main.js",
   "scripts": {
@@ -13,6 +13,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "mysql2": "^3.24.4",
     "pg": "^8.13.1",
     "pg-connection-string": "^2.7.0",
     "ssh2": "^1.17.0"

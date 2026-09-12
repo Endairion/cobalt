@@ -256,6 +256,26 @@ export function renderPlan(host, res) {
     host.append(box);
     return;
   }
+  // An engine whose plan is not a Postgres plan tree hands back text instead.
+  // Showing it plainly beats pretending it is a tree and rendering nothing.
+  if (!res.plan && res.planText) {
+    box.innerHTML = `
+      <div class="plan-head">
+        <span class="pill">${res.analyze ? 'executed' : 'estimated only — no rows were read'}</span>
+        <span class="spacer"></span>
+        <button class="btn small ghost" data-perf="copyplan">Copy plan</button>
+      </div>
+      <pre class="plan-text">${esc(res.planText)}</pre>`;
+    box.addEventListener('click', (e) => {
+      if (e.target.closest('[data-perf="copyplan"]')) {
+        ctx.copy(res.planText);
+        ctx.toast('Plan copied.');
+      }
+    });
+    host.append(box);
+    return;
+  }
+
   const all = collectNodes(res.plan);
   const seqScans = all.filter((n) => n['Node Type'] === 'Seq Scan' && (n['Actual Rows'] ?? n['Plan Rows']) > 1000);
   const misses = all.filter((n) => {

@@ -27,10 +27,19 @@ let ctx = {
 export function wire(c) { ctx = { ...ctx, ...c }; }
 
 /** Types offered in the type box. You can type anything; these are just quick. */
-const COMMON_TYPES = ['text', 'boolean', 'integer', 'bigint', 'numeric(12,2)', 'double precision',
-  'date', 'timestamptz', 'uuid', 'jsonb', 'bytea', 'text[]', 'inet'];
+const TYPES_BY_ENGINE = {
+  postgres: ['text', 'boolean', 'integer', 'bigint', 'numeric(12,2)', 'double precision',
+    'date', 'timestamptz', 'uuid', 'jsonb', 'bytea', 'text[]', 'inet'],
+  mysql: ['varchar(255)', 'text', 'tinyint(1)', 'int', 'bigint', 'decimal(12,2)', 'double',
+    'date', 'datetime', 'timestamp', 'char(36)', 'json', 'blob'],
+};
+const typesFor = (engine) => TYPES_BY_ENGINE[engine] || TYPES_BY_ENGINE.postgres;
 
-const INDEX_METHODS = ['btree', 'hash', 'gin', 'gist', 'brin', 'spgist'];
+const METHODS_BY_ENGINE = {
+  postgres: ['btree', 'hash', 'gin', 'gist', 'brin', 'spgist'],
+  mysql: ['btree', 'hash'],
+};
+const methodsFor = (engine) => METHODS_BY_ENGINE[engine] || METHODS_BY_ENGINE.postgres;
 
 /* --------------------------- the shared dialog --------------------------- */
 
@@ -163,7 +172,8 @@ function openOp({ title, subtitle, fields, build, runLabel = 'Run', danger = fal
 /* ------------------------------ table menu ------------------------------ */
 
 /** Menu entries for a table, view or matview in the sidebar. */
-export function tableMenuItems({ connId, schema, table, kind, columns, readOnly }) {
+export function tableMenuItems({ connId, schema, table, kind, columns, readOnly, engine = 'postgres' }) {
+  const pg = engine === 'postgres';
   const isTable = kind === 'r' || kind === 'p';
   const rel = `${schema}.${table}`;
 
@@ -176,11 +186,11 @@ export function tableMenuItems({ connId, schema, table, kind, columns, readOnly 
         title: `Add a column to ${rel}`,
         fields: [
           { id: 'name', label: 'Name', kind: 'text', placeholder: 'nickname' },
-          { id: 'type', label: 'Type', kind: 'text', value: 'text', options: COMMON_TYPES },
+          { id: 'type', label: 'Type', kind: 'text', value: engine === 'mysql' ? 'varchar(255)' : 'text', options: typesFor(engine) },
           { id: 'defaultExpr', label: 'Default', kind: 'text', placeholder: "leave blank for none — e.g. 'basic', now(), 0" },
           { id: 'notNull', label: 'NOT NULL', kind: 'check', hint: 'needs a default on a table that already has rows' },
         ],
-        build: (v) => ddl.addColumn({ schema, table, ...v }),
+        build: (v) => ddl.addColumn({ schema, table, engine, ...v }),
         runLabel: 'Add column',
       }),
     });
@@ -193,12 +203,12 @@ export function tableMenuItems({ connId, schema, table, kind, columns, readOnly 
         fields: [
           { id: 'columns', label: 'Columns', kind: 'columns', columns: columns || [], hint: 'in the order you tick them' },
           { id: 'unique', label: 'Unique', kind: 'check' },
-          { id: 'method', label: 'Method', kind: 'select', options: INDEX_METHODS, value: 'btree' },
+          { id: 'method', label: 'Method', kind: 'select', options: methodsFor(engine), value: 'btree' },
           { id: 'name', label: 'Name', kind: 'text', placeholder: 'left blank, Postgres convention is used' },
           { id: 'where', label: 'Where (partial index)', kind: 'text', placeholder: 'deleted_at is null' },
-          { id: 'concurrently', label: 'Concurrently', kind: 'check', hint: 'does not lock the table; cannot run inside a transaction' },
+          ...(pg ? [{ id: 'concurrently', label: 'Concurrently', kind: 'check', hint: 'does not lock the table; cannot run inside a transaction' }] : []),
         ],
-        build: (v) => ddl.createIndex({ schema, table, ...v }),
+        build: (v) => ddl.createIndex({ schema, table, engine, ...v }),
         runLabel: 'Create index',
       }),
     });
@@ -211,7 +221,7 @@ export function tableMenuItems({ connId, schema, table, kind, columns, readOnly 
       connId,
       title: `Rename ${rel}`,
       fields: [{ id: 'to', label: 'New name', kind: 'text', value: table }],
-      build: (v) => ddl.renameTable({ schema, table, ...v }),
+      build: (v) => ddl.renameTable({ schema, table, engine, ...v }),
       runLabel: 'Rename',
     }),
   });
@@ -224,11 +234,11 @@ export function tableMenuItems({ connId, schema, table, kind, columns, readOnly 
         connId,
         title: `Empty ${rel}`,
         subtitle: 'TRUNCATE removes every row. It cannot be undone and no trigger sees the rows go.',
-        fields: [
+        fields: pg ? [
           { id: 'restartIdentity', label: 'Restart identity', kind: 'check', hint: 'reset generated keys to 1' },
           { id: 'cascade', label: 'Cascade', kind: 'check', hint: 'also empties tables with a foreign key to this one' },
-        ],
-        build: (v) => ddl.truncateTable({ schema, table, ...v }),
+        ] : [],
+        build: (v) => ddl.truncateTable({ schema, table, engine, ...v }),
         runLabel: 'Empty table',
         danger: true,
         confirm: {
@@ -248,10 +258,10 @@ export function tableMenuItems({ connId, schema, table, kind, columns, readOnly 
       connId,
       title: `Drop ${rel}`,
       subtitle: 'The table and its data, indexes and triggers all go.',
-      fields: [
+      fields: pg ? [
         { id: 'cascade', label: 'Cascade', kind: 'check', hint: 'also drops views and foreign keys that depend on it' },
-      ],
-      build: (v) => ddl.dropTable({ schema, table, kind, ...v }),
+      ] : [],
+      build: (v) => ddl.dropTable({ schema, table, kind, engine, ...v }),
       runLabel: 'Drop',
       danger: true,
       confirm: {
@@ -273,7 +283,8 @@ export function tableMenuItems({ connId, schema, table, kind, columns, readOnly 
 
 /* ------------------------------ column menu ------------------------------ */
 
-export function columnMenuItems({ connId, schema, table, column, readOnly }) {
+export function columnMenuItems({ connId, schema, table, column, readOnly, engine = 'postgres' }) {
+  const pg = engine === 'postgres';
   const name = column.name;
   const rel = `${schema}.${table}`;
   const items = [
@@ -284,7 +295,7 @@ export function columnMenuItems({ connId, schema, table, column, readOnly }) {
         title: `Rename ${name}`,
         subtitle: rel,
         fields: [{ id: 'to', label: 'New name', kind: 'text', value: name }],
-        build: (v) => ddl.renameColumn({ schema, table, name, ...v }),
+        build: (v) => ddl.renameColumn({ schema, table, name, engine, ...v }),
         runLabel: 'Rename',
       }),
     },
@@ -295,16 +306,16 @@ export function columnMenuItems({ connId, schema, table, column, readOnly }) {
         title: `Type of ${name}`,
         subtitle: `${rel} — currently ${column.type}`,
         fields: [
-          { id: 'type', label: 'New type', kind: 'text', value: column.type, options: COMMON_TYPES },
-          {
+          { id: 'type', label: 'New type', kind: 'text', value: column.type, options: typesFor(engine) },
+          ...(pg ? [{
             id: 'using',
             label: 'Using',
             kind: 'text',
             placeholder: `${name}::text`,
             hint: 'only needed when there is no automatic cast',
-          },
+          }] : []),
         ],
-        build: (v) => ddl.alterColumnType({ schema, table, name, ...v }),
+        build: (v) => ddl.alterColumnType({ schema, table, name, engine, ...v }),
         runLabel: 'Change type',
       }),
     },
@@ -315,7 +326,7 @@ export function columnMenuItems({ connId, schema, table, column, readOnly }) {
         title: `Default for ${name}`,
         subtitle: `${rel} — leave the box empty to drop the default`,
         fields: [{ id: 'defaultExpr', label: 'Default', kind: 'text', value: column.defaultExpr || '', placeholder: 'now()' }],
-        build: (v) => ddl.setDefault({ schema, table, name, ...v }),
+        build: (v) => ddl.setDefault({ schema, table, name, engine, ...v }),
         runLabel: 'Apply',
       }),
     },
@@ -326,7 +337,7 @@ export function columnMenuItems({ connId, schema, table, column, readOnly }) {
         title: column.notNull ? `Allow NULL in ${name}` : `Require a value in ${name}`,
         subtitle: rel,
         fields: [],
-        build: () => ddl.setNotNull({ schema, table, name, notNull: !column.notNull }),
+        build: () => ddl.setNotNull({ schema, table, name, engine, notNull: !column.notNull, currentType: column.type }),
         runLabel: 'Apply',
       }),
     },
@@ -338,8 +349,8 @@ export function columnMenuItems({ connId, schema, table, column, readOnly }) {
         connId,
         title: `Drop ${name}`,
         subtitle: `${rel} — the data in this column goes with it.`,
-        fields: [{ id: 'cascade', label: 'Cascade', kind: 'check', hint: 'also drops indexes and constraints that use it' }],
-        build: (v) => ddl.dropColumn({ schema, table, name, ...v }),
+        fields: pg ? [{ id: 'cascade', label: 'Cascade', kind: 'check', hint: 'also drops indexes and constraints that use it' }] : [],
+        build: (v) => ddl.dropColumn({ schema, table, name, engine, ...v }),
         runLabel: 'Drop column',
         danger: true,
         confirm: {

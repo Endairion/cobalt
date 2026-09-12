@@ -117,9 +117,12 @@ const BYTEA_RE = /^\\x(?:[0-9a-fA-F]{2})+$/;
 function classify(value, column = {}) {
   if (value === null || value === undefined) return 'null';
   const s = String(value);
+  // `kind` is the engine-neutral answer; the type name is the fallback, and
+  // differs by engine (bytea vs blob, jsonb vs json).
+  const kind = String(column.kind || '');
   const type = String(column.dataType || '').toLowerCase();
-  if (type === 'bytea' || BYTEA_RE.test(s)) return 'bytea';
-  if (type === 'json' || type === 'jsonb') return 'json';
+  if (kind === 'binary' || type === 'bytea' || /^(tiny|medium|long)?blob|^varbinary|^binary/.test(type) || BYTEA_RE.test(s)) return 'bytea';
+  if (kind === 'json' || type === 'json' || type === 'jsonb') return 'json';
   const t = s.trim();
   if ((t.startsWith('{') || t.startsWith('[')) && prettyJson(t).ok) return 'json';
   if (s.includes('\n')) return 'multiline';

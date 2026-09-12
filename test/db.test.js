@@ -252,6 +252,38 @@ async function test(name, fn) {
     await assert.rejects(() => m.ddl(id, '   '), /No statement/i);
   });
 
+  await test('the process list shows this connection and what it is doing', async () => {
+    const slow = m.run(id, 'tabBusy', 'select pg_sleep(3)');
+    await new Promise((r) => setTimeout(r, 600));
+    const rows = await m.processList(id);
+    assert.ok(rows.length >= 1, 'expected at least our own connection');
+    assert.ok(rows.some((r) => r.is_self), 'one row should be us');
+    const busy = rows.find((r) => /pg_sleep/.test(r.query || ''));
+    assert.ok(busy, `the sleeping query should be listed: ${JSON.stringify(rows.map((r) => r.query))}`);
+    assert.strictEqual(busy.state, 'active');
+    assert.ok(busy.seconds >= 0);
+    await m.cancel(id, 'tabBusy');
+    await slow;
+  });
+
+  await test('a query can be cancelled from the process list', async () => {
+    const slow = m.run(id, 'tabKill', 'select pg_sleep(20)');
+    await new Promise((r) => setTimeout(r, 600));
+    const rows = await m.processList(id);
+    const target = rows.find((r) => /pg_sleep\(20\)/.test(r.query || ''));
+    assert.ok(target, 'should have found it');
+    assert.strictEqual(await m.killQuery(id, target.id), true);
+    const { results } = await slow;
+    assert.ok(results[0].error, 'the query should have stopped');
+  });
+
+  await test('a read-only connection will not kill anything', async () => {
+    const ro = new Manager();
+    const conn = await ro.open({ ...CFG, name: 'RO', readOnly: true });
+    await assert.rejects(() => ro.killQuery(conn.id, 1), /read-only/i);
+    await ro.closeAll();
+  });
+
   console.log('\nsessions & introspection');
 
   await test('each tab gets its own backend session', async () => {

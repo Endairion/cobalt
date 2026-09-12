@@ -77,7 +77,7 @@ export function openAbout() {
     ['pg driver', info.pg || 'unknown'],
     ['Platform', info.platform],
   ];
-  if (conn) rows.push(['Connected to', `${conn.name} · ${conn.database} · PostgreSQL ${conn.serverVersion}`]);
+  if (conn) rows.push(['Connected to', `${conn.name} · ${conn.database} · ${conn.engineLabel || 'PostgreSQL'} ${conn.serverVersion}`]);
 
   const node = document.createElement('div');
   node.className = 'modal about-modal';

@@ -13,6 +13,21 @@
 
 const releases = [
   {
+    version: '0.17.0',
+    date: '2026-09-13',
+    title: 'MySQL, and what the server is doing',
+    summary: 'A driver seam, MySQL and MariaDB behind it, and a server activity panel.',
+    changes: [
+      { type: 'added', text: 'MySQL and MariaDB. Pick the engine in the connection dialog; everything else works the same - browsing, the editable grid, paging, filtering, foreign key navigation, the value inspector, export and import. A connection with no engine recorded is Postgres, which is what every saved connection was.' },
+      { type: 'added', text: 'Server Activity (Ctrl+Shift+L) lists what the server is doing: who is connected, what each one is running and for how long. Cancel stops a statement, Kill closes the connection, both after confirming. Your own connection is marked and cannot be killed by mis-click. It does not poll unless you ask it to.' },
+      { type: 'changed', text: 'Everything specific to one database now lives in src/main/drivers. db.js keeps the parts that are the same either way - paging, filtering, the change set a grid edit produces, benchmarking - and asks the driver for catalog queries, identifier quoting, placeholder style and how a result reports where its columns came from.' },
+      { type: 'changed', text: 'The schema dialogs generate the syntax of the engine you are on rather than Postgres syntax with different quotes: MODIFY COLUMN instead of ALTER COLUMN ... TYPE, USING before the table on an index, NOT NULL before DEFAULT, and no CASCADE or CONCURRENTLY where they do not exist. Options an engine does not have are not offered.' },
+      { type: 'changed', text: 'Values arrive as text on MySQL too. mysql2 hands back a JS number for a BIGINT and a parsed object for a JSON column - and a parsed JSON column has already destroyed any integer past 2^53 - so the driver takes the raw bytes instead. A TEXT and a BLOB column are the same protocol type and differ only by charset, which is what decides whether the value is shown as text or as hex.' },
+      { type: 'changed', text: 'Column types are reported as a kind the app understands rather than a Postgres OID, because the same number means something else on another engine. That is what the JSON and SQL exports and the value inspector now read.' },
+      { type: 'fixed', text: 'Selecting from a MySQL view reports the base tables behind the view, so it read as "joins more than one table". It now says it is a view.' },
+    ],
+  },
+  {
     version: '0.16.0',
     date: '2026-09-13',
     title: 'SSH tunnels',

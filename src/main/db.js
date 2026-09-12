@@ -1,34 +1,10 @@
-'use strict';
-
-const { Pool, Client, types } = require('pg');
 const { splitStatements } = require('./sqlsplit');
 const { summarize, compare } = require('../shared/stats');
 const { isReadOnlyStatement } = require('../shared/sqlkind');
 const { validateWhere } = require('../shared/whereclause');
 const { Tunnel } = require('./tunnel');
-
-/* ------------------------------------------------------------------ *
- * Type handling
- *
- * The grid is a text editor over a database, so values arrive as the exact
- * text Postgres produced. That keeps numeric/timestamp/json round-trips
- * lossless — JS numbers and Dates would quietly mangle them.
- * ------------------------------------------------------------------ */
-const asText = (v) => v;
-for (const oid of [
-  20,   // int8
-  1700, // numeric
-  1082, // date
-  1114, // timestamp
-  1184, // timestamptz
-  1083, // time
-  1266, // timetz
-  1186, // interval
-  114,  // json
-  3802, // jsonb
-  700, 701, // float4/float8
-]) types.setTypeParser(oid, asText);
-types.setTypeParser(17, (v) => v); // bytea -> \x… text
+const { driverFor } = require('./drivers');
+const postgres = require('./drivers/postgres');
 
 /* ------------------------------------------------------------------ */
 
@@ -44,10 +20,8 @@ class Session {
 
   async ensure() {
     if (this.client) return this.client;
-    const client = new Client(this.conn.clientConfig());
-    await client.connect();
-    const r = await client.query('select pg_backend_pid() as pid');
-    this.pid = r.rows[0].pid;
+    const { client, pid } = await this.conn.driver.openSession(this.conn.clientConfig());
+    this.pid = pid;
     client.on('error', () => { this.client = null; });
     this.client = client;
     return client;
@@ -56,7 +30,7 @@ class Session {
   async close() {
     const c = this.client;
     this.client = null;
-    if (c) { try { await c.end(); } catch { /* already gone */ } }
+    if (c) await this.conn.driver.closeSession(c);
   }
 }
 
@@ -70,27 +44,12 @@ class Connection {
     this.currentDatabase = null;
     this.tunnel = null;
     this.endpoint = null;   // where the driver actually dials, tunnel or not
+    this.driver = driverFor(config.engine);
   }
 
+  /** With a tunnel up, everything dials its local end — pool, sessions, cancel. */
   clientConfig() {
-    const c = this.config;
-    // With a tunnel up, everything connects to the local end of it. Sessions and
-    // the cancel side-channel go through here too, so they follow automatically.
-    const at = this.endpoint || { host: c.host || 'localhost', port: Number(c.port) || 5432 };
-    const cfg = {
-      host: at.host,
-      port: at.port,
-      database: c.database || 'postgres',
-      user: c.user || undefined,
-      password: c.password || undefined,
-      application_name: 'Cobalt',
-      statement_timeout: 0,
-      connectionTimeoutMillis: 15000,
-    };
-    if (c.ssl && c.ssl !== 'disable') {
-      cfg.ssl = c.ssl === 'require' ? { rejectUnauthorized: false } : true;
-    }
-    return cfg;
+    return this.driver.clientConfig(this.config, this.endpoint);
   }
 
   /** Bring up the SSH tunnel, if this connection goes through one. */
@@ -100,19 +59,16 @@ class Connection {
     this.tunnel = new Tunnel(ssh);
     this.endpoint = await this.tunnel.open({
       host: this.config.host || 'localhost',
-      port: Number(this.config.port) || 5432,
+      port: Number(this.config.port) || this.driver.defaultPort,
     });
   }
 
   async connect() {
     await this.openTunnel();
-    this.pool = new Pool({ ...this.clientConfig(), max: 4, idleTimeoutMillis: 30000 });
-    this.pool.on('error', () => { /* idle client dropped; pool replaces it */ });
-    let r;
+    this.pool = this.driver.createPool(this.clientConfig());
+    let hello;
     try {
-      r = await this.pool.query(
-        "select current_database() as db, version() as version, current_setting('server_version') as sv"
-      );
+      hello = await this.driver.hello(this.pool);
     } catch (err) {
       // Through a tunnel, a driver-level failure is usually the tunnel's fault
       // and its message says nothing useful about why.
@@ -120,9 +76,9 @@ class Connection {
       if (why) { const e = new Error(`${why} (connecting to ${this.config.host}:${this.config.port} through ${this.tunnel.describe()})`); e.cause = err; throw e; }
       throw err;
     }
-    this.currentDatabase = r.rows[0].db;
-    this.serverVersion = r.rows[0].sv;
-    return { database: this.currentDatabase, serverVersion: this.serverVersion, banner: r.rows[0].version };
+    this.currentDatabase = hello.database;
+    this.serverVersion = hello.serverVersion;
+    return { database: this.currentDatabase, serverVersion: this.serverVersion, banner: hello.banner };
   }
 
   session(key) {
@@ -149,117 +105,15 @@ class Connection {
     const s = this.sessions.get(key);
     if (!s || !s.pid) return false;
     s.cancelRequested = true;          // also stops a benchmark between iterations
-    const side = new Client(this.clientConfig());
-    await side.connect();
-    try {
-      await side.query('select pg_cancel_backend($1)', [s.pid]);
-      return true;
-    } finally { await side.end().catch(() => {}); }
+    return this.driver.cancel(this.clientConfig(), s.pid);
   }
 }
 
-/* ------------------------------------------------------------------ *
- * Result metadata: figure out which physical table each column came from,
- * which is what makes the grid editable.
- * ------------------------------------------------------------------ */
-
-const RESULT_META_SQL = `
-  select a.attrelid::int as table_oid,
-         a.attnum::int   as attnum,
-         a.attname       as column_name,
-         a.attnotnull    as not_null,
-         a.atthasdef     as has_default,
-         pg_get_expr(d.adbin, d.adrelid) as default_expr,
-         format_type(a.atttypid, a.atttypmod) as data_type,
-         c.relname       as table_name,
-         c.relkind::text as relkind,
-         n.nspname       as schema_name
-  from pg_attribute a
-  join pg_class c on c.oid = a.attrelid
-  join pg_namespace n on n.oid = c.relnamespace
-  left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
-  where a.attrelid = any($1::oid[]) and a.attnum > 0 and not a.attisdropped`;
-
-const KEY_SQL = `
-  select i.indrelid::int as table_oid,
-         i.indkey::int2[] as cols,
-         i.indisprimary   as is_primary
-  from pg_index i
-  where i.indrelid = any($1::oid[])
-    and i.indisunique and i.indpred is null and i.indisvalid
-  order by i.indisprimary desc`;
-
-async function describeResult(db, fields) {
-  const oids = [...new Set(fields.map((f) => f.tableID).filter((x) => x && x > 0))];
-  const columns = fields.map((f, idx) => ({
-    index: idx,
-    name: f.name,
-    dataTypeID: f.dataTypeID,
-    tableOid: f.tableID || null,
-    attnum: f.columnID || null,
-    dataType: null,
-    sourceColumn: null,
-    notNull: false,
-    hasDefault: false,
-    defaultExpr: null,
-  }));
-  if (!oids.length) return { columns, source: null, editable: false, reason: 'Result is not backed by a table.' };
-
-  const [meta, keys] = await Promise.all([
-    db.query(RESULT_META_SQL, [oids]),
-    db.query(KEY_SQL, [oids]),
-  ]);
-
-  const byAttr = new Map();
-  const tables = new Map();
-  for (const r of meta.rows) {
-    byAttr.set(`${r.table_oid}:${r.attnum}`, r);
-    if (!tables.has(r.table_oid)) {
-      tables.set(r.table_oid, { oid: r.table_oid, schema: r.schema_name, table: r.table_name, relkind: r.relkind });
-    }
-  }
-  for (const c of columns) {
-    const m = c.tableOid && c.attnum ? byAttr.get(`${c.tableOid}:${c.attnum}`) : null;
-    if (!m) continue;
-    c.dataType = m.data_type;
-    c.sourceColumn = m.column_name;
-    c.notNull = m.not_null;
-    c.hasDefault = m.has_default;
-    c.defaultExpr = m.default_expr;
-  }
-
-  // Editing needs exactly one base table behind the result.
-  const distinct = [...tables.values()];
-  if (distinct.length !== 1) {
-    return { columns, source: null, editable: false, reason: 'Result joins more than one table.' };
-  }
-  const src = distinct[0];
-  if (src.relkind !== 'r' && src.relkind !== 'p') {
-    return { columns, source: src, editable: false, reason: 'Source is a view, not a table.' };
-  }
-
-  // Pick the first unique key (PK preferred) fully present in the result.
-  let keyColumns = null;
-  for (const k of keys.rows.filter((r) => r.table_oid === src.oid)) {
-    const attnums = (k.cols || []).map(Number).filter((x) => x > 0);
-    if (!attnums.length) continue;
-    const mapped = attnums.map((an) => columns.find((c) => c.tableOid === src.oid && c.attnum === an));
-    if (mapped.every(Boolean)) { keyColumns = mapped.map((c) => c.index); break; }
-  }
-  if (!keyColumns) {
-    return { columns, source: src, editable: false, reason: 'No primary or unique key in the result — select the key columns to edit rows.' };
-  }
-  return { columns, source: src, key: keyColumns, editable: true, reason: null };
-}
-
-/* ------------------------------------------------------------------ */
-
-const qid = (s) => '"' + String(s).replace(/"/g, '""') + '"';
-// Display-only: leave already-safe identifiers bare so generated DDL reads naturally.
-const RESERVED = new Set(['user','order','table','select','from','where','group','default','check','column','constraint','index','primary','references','unique','all','and','any','array','as','case','cast','desc','asc','limit','offset','union','using','when','with']);
-const qidNice = (s) => (/^[a-z_][a-z0-9_]*$/.test(s) && !RESERVED.has(s) ? s : qid(s));
-const qnameNice = (schema, table) => `${qidNice(schema)}.${qidNice(table)}`;
-const qname = (schema, table) => `${qid(schema)}.${qid(table)}`;
+/**
+ * The engine-specific scraps the query builders below need. They default to
+ * Postgres, which is what every caller wanted before there was a choice.
+ */
+const dialectOf = (d) => (d && d.quote ? d : postgres);
 
 /* ------------------------------------------------------------------ *
  * Column filters
@@ -294,26 +148,28 @@ function splitLimitTail(sql) {
 }
 
 /** Filter conditions, appending bound values to `values`. */
-function buildFilterConds(filters, values) {
+function buildFilterConds(filters, values, dialect) {
+  const d = dialectOf(dialect);
   const conds = [];
   for (const f of filters || []) {
-    const op = FILTER_OPS.get(String(f.op || '').toLowerCase().replace(/\s+/g, ' ').trim());
-    if (!op) throw new Error(`Unsupported filter operator: ${f.op}`);
+    const raw = FILTER_OPS.get(String(f.op || '').toLowerCase().replace(/\s+/g, ' ').trim());
+    if (!raw) throw new Error(`Unsupported filter operator: ${f.op}`);
     if (!f.name) throw new Error('Filter is missing a column name.');
-    const col = TEXT_OPS.has(op) ? `${qid(f.name)}::text` : qid(f.name);
+    const op = d.mapOperator(raw);
+    const col = TEXT_OPS.has(raw) ? d.textCast(d.quote(f.name)) : d.quote(f.name);
 
-    if (NO_VALUE_OPS.has(op)) { conds.push(`${col} ${op}`); continue; }
+    if (NO_VALUE_OPS.has(raw)) { conds.push(`${col} ${op}`); continue; }
 
-    if (op === 'in' || op === 'not in') {
+    if (raw === 'in' || raw === 'not in') {
       const list = Array.isArray(f.values) ? f.values : [f.value];
       if (!list.length) throw new Error(`The ${op.toUpperCase()} filter on "${f.name}" needs at least one value.`);
-      const ph = list.map((v) => { values.push(v); return `$${values.length}`; });
+      const ph = list.map((v) => { values.push(v); return d.placeholder(values.length); });
       conds.push(`${col} ${op} (${ph.join(', ')})`);
       continue;
     }
 
     values.push(f.value);
-    conds.push(`${col} ${op} $${values.length}`);
+    conds.push(`${col} ${op} ${d.placeholder(values.length)}`);
   }
   return conds;
 }
@@ -330,8 +186,8 @@ function parseLimitTail(baseSql) {
   };
 }
 
-const orderClause = (sort) => sort.map((s) =>
-  `${qid(s.name)} ${String(s.dir).toLowerCase() === 'desc' ? 'desc' : 'asc'}`).join(', ');
+const orderClause = (sort, d) => sort.map((s) =>
+  `${d.quote(s.name)} ${String(s.dir).toLowerCase() === 'desc' ? 'desc' : 'asc'}`).join(', ');
 
 /**
  * One page of a query, with filters and sorting pushed down to the server.
@@ -343,11 +199,12 @@ const orderClause = (sort) => sort.map((s) =>
  * anything else falls back to OFFSET.
  */
 function buildPagedQuery(baseSql, {
-  filters = [], where = '', sort = [], limit = null, offset = 0, after = null,
+  filters = [], where = '', sort = [], limit = null, offset = 0, after = null, dialect = null,
 } = {}) {
+  const d = dialectOf(dialect);
   const { inner, baseLimit, baseOffset } = parseLimitTail(baseSql);
   const values = [];
-  const conds = buildFilterConds(filters, values);
+  const conds = buildFilterConds(filters, values, d);
 
   // A hand-written condition, checked for anything that would escape the wrapper.
   if (String(where || '').trim()) {
@@ -359,16 +216,16 @@ function buildPagedQuery(baseSql, {
 
   if (after && after.length && sort.length === after.length) {
     const dirs = new Set(sort.map((x) => String(x.dir).toLowerCase() === 'desc' ? 'desc' : 'asc'));
-    if (dirs.size === 1 && baseLimit == null) {
-      const cols = sort.map((x) => qid(x.name)).join(', ');
-      const ph = after.map((v) => { values.push(v); return `$${values.length}`; });
+    if (dirs.size === 1 && baseLimit == null && d.keysetPaging) {
+      const cols = sort.map((x) => d.quote(x.name)).join(', ');
+      const ph = after.map((v) => { values.push(v); return d.placeholder(values.length); });
       conds.push(`(${cols}) ${dirs.has('desc') ? '<' : '>'} (${ph.join(', ')})`);
       strategy = 'keyset';
     }
   }
 
   const whereSql = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
-  const order = sort.length ? `\norder by ${orderClause(sort)}` : '';
+  const order = sort.length ? `\norder by ${orderClause(sort, d)}` : '';
 
   // The caller's own LIMIT caps the whole set; a page is served from inside it.
   let pageLimit = limit;
@@ -383,7 +240,7 @@ function buildPagedQuery(baseSql, {
     : `\nlimit ${Math.max(0, Math.floor(pageLimit))}${pageOffset ? ` offset ${Math.floor(pageOffset)}` : ''}`;
 
   return {
-    text: `select * from (\n${inner}\n) as ${qid('_cobalt')}${whereSql}${order}${tail}`,
+    text: `select * from (\n${inner}\n) as ${d.quote('_cobalt')}${whereSql}${order}${tail}`,
     values,
     strategy,
     baseLimit,
@@ -391,43 +248,19 @@ function buildPagedQuery(baseSql, {
 }
 
 /** Kept for callers that only filter. */
-function buildFilteredQuery(baseSql, filters = []) {
+function buildFilteredQuery(baseSql, filters = [], dialect = null) {
+  const d = dialectOf(dialect);
   const { inner, tail } = splitLimitTail(baseSql);
   const values = [];
-  const conds = buildFilterConds(filters, values);
+  const conds = buildFilterConds(filters, values, d);
   const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
-  return { text: `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}${tail}`, values };
+  return { text: `select * from (\n${inner}\n) as ${d.quote('_cobalt')}${where}${tail}`, values };
 }
-
-function shapeError(err, statement) {
-  return {
-    message: err.message || String(err),
-    code: err.code || null,
-    detail: err.detail || null,
-    hint: err.hint || null,
-    position: err.position ? Number(err.position) : null,
-    where: err.where || null,
-    statement,
-  };
-}
-
 
 /* ------------------------------------------------------------------ *
  * Performance tools
  * ------------------------------------------------------------------ */
 
-
-
-/**
- * EXPLAIN (FORMAT JSON) returns a json column, and this module deliberately
- * hands json back as raw text so values round-trip losslessly — which means the
- * plan arrives as a string and has to be parsed here.
- */
-function parseExplainPayload(row) {
-  const raw = row['QUERY PLAN'];
-  const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  return Array.isArray(arr) ? arr[0] : arr;
-}
 
 
 class Benchmark {
@@ -444,10 +277,9 @@ class Benchmark {
     const t0 = process.hrtime.bigint();
     let rowCount = null;
     try {
-      const r = await this.client.query({ text: sql, rowMode: 'array' });
-      rowCount = Array.isArray(r) ? r[r.length - 1].rowCount : r.rowCount;
-      const list = Array.isArray(r) ? r : [r];
+      const list = await this.conn.driver.query(this.client, sql);
       const last = list[list.length - 1];
+      rowCount = last ? last.rowCount : null;
       if (last && Array.isArray(last.rows)) rowCount = last.rows.length || last.rowCount;
     } finally {
       if (rollback) { try { await this.client.query('rollback'); } catch { /* gone */ } }
@@ -458,15 +290,16 @@ class Benchmark {
 
   /** Server-side planning/execution split, measured once per variant. */
   async plan(sql, rollback) {
-    const text = `explain (analyze, buffers, format json) ${sql}`;
+    const d = this.conn.driver;
+    const text = d.explainSql(sql, { analyze: true });
     if (rollback) await this.client.query('begin');
     try {
-      const r = await this.client.query(text);
-      const root = parseExplainPayload(r.rows[0]);
+      const [r] = await d.query(this.client, text);
+      const parsed = d.parseExplain(r);
       return {
-        planningMs: root['Planning Time'] ?? null,
-        executionMs: root['Execution Time'] ?? null,
-        plan: root.Plan,
+        planningMs: parsed.planningMs,
+        executionMs: parsed.executionMs,
+        plan: parsed.plan,
       };
     } catch {
       return null;
@@ -496,7 +329,14 @@ class Manager {
     try {
       const info = await conn.connect();
       this.connections.set(id, conn);
-      return { id, ...info };
+      return {
+        id,
+        engine: conn.driver.id,
+        engineLabel: conn.driver.label,
+        hasSchemas: conn.driver.hasSchemas,
+        schemaWord: conn.driver.schemaWord,
+        ...info,
+      };
     } catch (e) {
       await conn.close();
       throw e;
@@ -531,17 +371,16 @@ class Manager {
     try {
       for (const st of statements) {
         const began = Date.now();
-        let res;
+        let list;
         try {
-          res = await client.query({ text: st.sql, rowMode: 'array' });
+          list = await conn.driver.query(client, st.sql);
         } catch (err) {
           results.push({
             sql: st.sql, start: st.start, end: st.end,
-            error: shapeError(err, st.sql), elapsedMs: Date.now() - began,
+            error: conn.driver.shapeError(err, st.sql), elapsedMs: Date.now() - began,
           });
           break;
         }
-        const list = Array.isArray(res) ? res : [res];
         for (const r of list) {
           results.push(await this.shape(conn, r, {
             sql: st.sql, start: st.start, end: st.end, elapsedMs: Date.now() - began, maxRows,
@@ -559,7 +398,7 @@ class Manager {
     const hasRows = Array.isArray(r.fields) && r.fields.length > 0;
     let meta = null;
     if (hasRows) {
-      try { meta = await describeResult(conn.pool, r.fields); }
+      try { meta = await conn.driver.describeResult(conn.pool, r.fields); }
       catch { meta = null; }
     }
     const rows = hasRows ? r.rows.slice(0, maxRows) : [];
@@ -594,13 +433,13 @@ class Manager {
     const client = await session.ensure();
     session.busy = true;
     const began = Date.now();
-    const { text, values } = buildFilteredQuery(baseSql, filters);
+    const { text, values } = buildFilteredQuery(baseSql, filters, conn.driver);
     try {
       let r;
       try {
-        r = await client.query({ text, values, rowMode: 'array' });
+        [r] = await conn.driver.query(client, text, values);
       } catch (err) {
-        return { results: [{ sql: text, baseSql, error: shapeError(err, text), elapsedMs: Date.now() - began }] };
+        return { results: [{ sql: text, baseSql, error: conn.driver.shapeError(err, text), elapsedMs: Date.now() - began }] };
       }
       const shaped = await this.shape(conn, r, { sql: text, elapsedMs: Date.now() - began, maxRows });
       return { results: [{ ...shaped, baseSql, filtered: filters.length > 0 }] };
@@ -665,7 +504,7 @@ class Manager {
         for (const v of state) {
           if (v.error || session.cancelRequested) continue;
           try { await bench.once(v.sql, rollback); }
-          catch (err) { v.error = shapeError(err, v.sql); }
+          catch (err) { v.error = conn.driver.shapeError(err, v.sql); }
           report('warmup', ++step, totalSteps);
         }
       }
@@ -679,7 +518,7 @@ class Manager {
             v.samples.push(ms);
             v.rowCount = rowCount;
           } catch (err) {
-            v.error = shapeError(err, v.sql);
+            v.error = conn.driver.shapeError(err, v.sql);
           }
           report('measure', ++step, totalSteps);
         }
@@ -720,33 +559,32 @@ class Manager {
 
     const readOnly = isReadOnlyStatement(sql);
     const rollback = analyze && !readOnly;
-    const opts = ['format json', 'verbose', 'costs'];
-    if (analyze) opts.unshift('analyze', 'buffers');
-    const text = `explain (${opts.join(', ')}) ${sql}`;
+    const text = conn.driver.explainSql(sql, { analyze });
     const began = Date.now();
 
     try {
       if (rollback) await client.query('begin');
       let r;
       try {
-        r = await client.query(text);
+        [r] = await conn.driver.query(client, text);
       } finally {
         if (rollback) { try { await client.query('rollback'); } catch { /* gone */ } }
       }
-      const root = parseExplainPayload(r.rows[0]);
+      const parsed = conn.driver.parseExplain(r);
       return {
         kind: 'plan',
         sql,
         analyze,
         rolledBack: rollback,
-        planningMs: root['Planning Time'] ?? null,
-        executionMs: root['Execution Time'] ?? null,
-        triggers: root['Triggers'] || [],
-        plan: root.Plan,
+        planningMs: parsed.planningMs,
+        executionMs: parsed.executionMs,
+        triggers: parsed.triggers,
+        plan: parsed.plan,
+        planText: parsed.planText,
         elapsedMs: Date.now() - began,
       };
     } catch (err) {
-      return { kind: 'plan', sql, analyze, error: shapeError(err, text), elapsedMs: Date.now() - began };
+      return { kind: 'plan', sql, analyze, error: conn.driver.shapeError(err, text), elapsedMs: Date.now() - began };
     } finally {
       session.busy = false;
     }
@@ -760,8 +598,9 @@ class Manager {
    */
   async probeColumns(conn, client, baseSql) {
     const { inner } = parseLimitTail(baseSql);
-    const r = await client.query({ text: `select * from (\n${inner}\n) as ${qid('_cobalt')} limit 0`, rowMode: 'array' });
-    return describeResult(conn.pool, r.fields || []);
+    const d = conn.driver;
+    const [r] = await d.query(client, `select * from (\n${inner}\n) as ${d.quote('_cobalt')} limit 0`);
+    return d.describeResult(conn.pool, r.fields || []);
   }
 
   /**
@@ -819,13 +658,14 @@ class Manager {
         limit: limit + 1,                      // one extra row answers "is there more?"
         offset,
         after: keysetSafe ? after : null,
+        dialect: conn.driver,
       });
 
       let r;
       try {
-        r = await client.query({ text: built.text, values: built.values, rowMode: 'array' });
+        [r] = await conn.driver.query(client, built.text, built.values);
       } catch (err) {
-        return { results: [{ sql: built.text, baseSql, error: shapeError(err, built.text), elapsedMs: Date.now() - began }] };
+        return { results: [{ sql: built.text, baseSql, error: conn.driver.shapeError(err, built.text), elapsedMs: Date.now() - began }] };
       }
 
       const hasMore = r.rows.length > limit;
@@ -874,8 +714,9 @@ class Manager {
     const session = conn.session(tabKey);
     const client = await session.ensure();
     const { inner, baseLimit, baseOffset } = parseLimitTail(baseSql);
+    const d = conn.driver;
     const values = [];
-    const conds = buildFilterConds(filters, values);
+    const conds = buildFilterConds(filters, values, d);
     if (String(where || '').trim()) {
       const v = validateWhere(where);
       if (!v.ok) throw new Error(v.error);
@@ -884,11 +725,12 @@ class Manager {
     const whereSql = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
     // A caller-supplied LIMIT bounds the count too, so honour it.
     const bounded = baseLimit == null
-      ? `select * from (\n${inner}\n) as ${qid('_cobalt')}${whereSql}`
-      : `select * from (\n${inner}\n) as ${qid('_cobalt')}${whereSql} limit ${baseLimit}${baseOffset ? ` offset ${baseOffset}` : ''}`;
+      ? `select * from (\n${inner}\n) as ${d.quote('_cobalt')}${whereSql}`
+      : `select * from (\n${inner}\n) as ${d.quote('_cobalt')}${whereSql} limit ${baseLimit}${baseOffset ? ` offset ${baseOffset}` : ''}`;
     const began = Date.now();
-    const r = await client.query({ text: `select count(*)::bigint as n from (\n${bounded}\n) as ${qid('_cobalt_count')}`, values });
-    return { count: Number(r.rows[0].n), elapsedMs: Date.now() - began };
+    const [r] = await d.query(client,
+      `select ${d.countExpr} as n from (\n${bounded}\n) as ${d.quote('_cobalt_count')}`, values);
+    return { count: Number(r.rows[0][0]), elapsedMs: Date.now() - began };
   }
 
   async cancel(id, tabKey) {
@@ -950,29 +792,29 @@ class Manager {
     if (!columns || !columns.length) throw new Error('No columns were mapped.');
     if (!rows || !rows.length) throw new Error('There are no rows to import.');
 
-    const rel = qname(schema, table);
-    const cols = columns.map((c) => qid(c)).join(', ');
-    const tail = mode === 'skipConflicts' ? ' on conflict do nothing' : '';
+    const d = conn.driver;
+    const rel = d.qualify(schema, table);
+    const cols = columns.map((c) => d.quote(c)).join(', ');
 
-    // Postgres takes at most 65535 bind parameters in one statement.
+    // There is a hard limit on bind parameters per statement, so batch to it.
     const perRow = columns.length;
-    const batchSize = Math.max(1, Math.min(1000, Math.floor(65000 / perRow)));
+    const batchSize = Math.max(1, Math.min(1000, Math.floor(d.maxBindParams / perRow)));
 
-    const client = await conn.pool.connect();
+    const tx = await d.begin(conn.pool);
     const started = Date.now();
     let inserted = 0;
     try {
-      await client.query('begin');
       for (let i = 0; i < rows.length; i += batchSize) {
         const chunk = rows.slice(i, i + batchSize);
         const params = [];
         const tuples = chunk.map((r) => {
-          const marks = r.map((v) => { params.push(v === undefined ? null : v); return `$${params.length}`; });
+          const marks = r.map((v) => { params.push(v === undefined ? null : v); return d.placeholder(params.length); });
           return `(${marks.join(', ')})`;
         });
         try {
-          const res = await client.query(
-            `insert into ${rel} (${cols}) values ${tuples.join(', ')}${tail}`, params);
+          const res = await tx.query(d.insertStatement({
+            rel, cols, tuples: tuples.join(', '), skipConflicts: mode === 'skipConflicts',
+          }), params);
           inserted += res.rowCount || 0;
         } catch (err) {
           // Name the first row of the batch that failed, so a 10,000 line file
@@ -981,12 +823,12 @@ class Manager {
           throw err;
         }
       }
-      await client.query('commit');
+      await tx.commit();
     } catch (err) {
-      try { await client.query('rollback'); } catch { /* the error above is the one that matters */ }
+      await tx.rollback();
       throw err;
     } finally {
-      client.release();
+      tx.release();
     }
     return { inserted, skipped: rows.length - inserted, elapsedMs: Date.now() - started };
   }
@@ -998,21 +840,21 @@ class Manager {
     if (conn.config && conn.config.readOnly) {
       throw new Error(`Connection "${conn.config.name || conn.id}" is marked read-only — no changes were applied.`);
     }
-    const client = await conn.pool.connect();
+    const d = conn.driver;
     const { source, columns, key } = change;
-    const rel = qname(source.schema, source.table);
+    const rel = d.qualify(source.schema, source.table);
     const keyNames = key.map((i) => columns[i].sourceColumn || columns[i].name);
     const applied = { updated: 0, inserted: 0, deleted: 0, returnedRows: [] };
+    const colName = (idx) => d.quote(columns[idx].sourceColumn || columns[idx].name);
 
+    // A key column can be NULL, so the comparison has to be the null-safe one.
     const whereClause = (offset) =>
-      keyNames.map((nme, i) => `${qid(nme)} is not distinct from $${offset + i + 1}`).join(' and ');
+      keyNames.map((nme, i) => d.nullSafeEq(d.quote(nme), d.placeholder(offset + i + 1))).join(' and ');
 
+    const tx = await d.begin(conn.pool);
     try {
-      await client.query('begin');
-
       for (const del of change.deletes || []) {
-        const sql = `delete from ${rel} where ${whereClause(0)}`;
-        const r = await client.query(sql, del.keyValues);
+        const r = await tx.query(`delete from ${rel} where ${whereClause(0)}`, del.keyValues);
         if (r.rowCount !== 1) throw new Error(`Delete matched ${r.rowCount} rows, expected 1. Rolled back.`);
         applied.deleted += r.rowCount;
       }
@@ -1020,12 +862,14 @@ class Manager {
       for (const up of change.updates || []) {
         const entries = Object.entries(up.set);
         if (!entries.length) continue;
-        const sets = entries.map(([idx], i) => `${qid(columns[idx].sourceColumn || columns[idx].name)} = $${i + 1}`);
+        const sets = entries.map(([idx], i) => `${colName(idx)} = ${d.placeholder(i + 1)}`);
         const params = entries.map(([, v]) => v);
-        const sql = `update ${rel} set ${sets.join(', ')} where ${whereClause(params.length)} returning *`;
-        const r = await client.query(sql, [...params, ...up.keyValues]);
-        if (r.rowCount !== 1) throw new Error(`Update matched ${r.rowCount} rows, expected 1. Rolled back.`);
-        applied.updated += r.rowCount;
+        const sql = `update ${rel} set ${sets.join(', ')} where ${whereClause(params.length)}`;
+        const r = await tx.query(sql, [...params, ...up.keyValues]);
+        // MySQL reports 0 changed rows when the new value equals the old one,
+        // even though it matched the row — so only "too many" is a failure.
+        if (r.rowCount > 1) throw new Error(`Update matched ${r.rowCount} rows, expected 1. Rolled back.`);
+        applied.updated += 1;
       }
 
       for (const ins of change.inserts || []) {
@@ -1033,79 +877,48 @@ class Manager {
         let sql;
         let params = [];
         if (!entries.length) {
-          sql = `insert into ${rel} default values returning *`;
+          sql = d.insertDefaultRow(rel);
         } else {
-          const cols = entries.map(([idx]) => qid(columns[idx].sourceColumn || columns[idx].name));
+          const cols = entries.map(([idx]) => colName(idx));
           params = entries.map(([, v]) => v);
-          const ph = params.map((_, i) => `$${i + 1}`);
-          sql = `insert into ${rel} (${cols.join(', ')}) values (${ph.join(', ')}) returning *`;
+          const ph = params.map((_, i) => d.placeholder(i + 1));
+          sql = `insert into ${rel} (${cols.join(', ')}) values (${ph.join(', ')})`;
         }
-        const r = await client.query(sql, params);
-        applied.inserted += r.rowCount;
+        const r = await tx.query(sql, params);
+        applied.inserted += r.rowCount || 1;
       }
 
-      await client.query('commit');
+      await tx.commit();
       return applied;
     } catch (err) {
-      try { await client.query('rollback'); } catch { /* connection may be gone */ }
-      throw Object.assign(new Error(err.message), { pgError: shapeError(err, null) });
+      await tx.rollback();
+      throw Object.assign(new Error(err.message), { pgError: d.shapeError(err, null) });
     } finally {
-      client.release();
+      tx.release();
     }
   }
 
-  /* ---------------- introspection ---------------- */
-
+  /**
+   * The sidebar tree. The driver supplies the rows; the shaping is the same for
+   * every engine. On an engine without schemas the connected database fills the
+   * schema slot, so the tree has the same three levels either way.
+   */
   async schemaTree(id) {
     const conn = this.get(id);
-    const rels = await conn.pool.query(`
-      select n.nspname as schema,
-             c.relname as name,
-             c.relkind::text as kind,
-             c.oid::int as oid,
-             coalesce(c.reltuples, 0)::bigint::text as est_rows
-      from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      where c.relkind in ('r','p','v','m','f')
-        and n.nspname not in ('pg_catalog','information_schema')
-        and n.nspname not like 'pg_toast%'
-        and n.nspname not like 'pg_temp%'
-      order by n.nspname, c.relname`);
-
-    const cols = await conn.pool.query(`
-      select n.nspname as schema, c.relname as table, a.attname as name,
-             format_type(a.atttypid, a.atttypmod) as type,
-             a.attnum::int as attnum, a.attnotnull as not_null,
-             pg_get_expr(ad.adbin, ad.adrelid) as default_expr,
-             coalesce(bool_or(i.indisprimary), false) as is_pk
-      from pg_attribute a
-      join pg_class c on c.oid = a.attrelid
-      join pg_namespace n on n.oid = c.relnamespace
-      left join pg_attrdef ad on ad.adrelid = c.oid and ad.adnum = a.attnum
-      left join pg_index i on i.indrelid = c.oid and a.attnum = any(i.indkey) and i.indisprimary
-      where a.attnum > 0 and not a.attisdropped
-        and c.relkind in ('r','p','v','m','f')
-        and n.nspname not in ('pg_catalog','information_schema')
-        and n.nspname not like 'pg_toast%'
-      group by 1,2,3,4,5,6,7
-      order by 1, 2, 5`);
-
-    const dbs = await conn.pool.query(
-      `select datname from pg_database where datallowconn and not datistemplate order by datname`
-    );
+    const { relations, columns, databases } = await conn.driver.schemaTree(conn.pool);
 
     const byTable = new Map();
-    for (const c of cols.rows) {
+    for (const c of columns) {
       const k = `${c.schema}.${c.table}`;
       if (!byTable.has(k)) byTable.set(k, []);
       byTable.get(k).push({
-        name: c.name, type: c.type, attnum: c.attnum,
-        notNull: c.not_null, defaultExpr: c.default_expr, isPk: c.is_pk,
+        name: c.name, type: c.type, attnum: Number(c.attnum),
+        notNull: !!c.not_null, defaultExpr: c.default_expr, isPk: !!c.is_pk,
       });
     }
 
     const schemas = new Map();
-    for (const r of rels.rows) {
+    for (const r of relations) {
       if (!schemas.has(r.schema)) schemas.set(r.schema, []);
       schemas.get(r.schema).push({
         name: r.name, kind: r.kind, oid: r.oid, estRows: Number(r.est_rows),
@@ -1113,13 +926,15 @@ class Manager {
       });
     }
     return {
+      engine: conn.driver.id,
+      engineLabel: conn.driver.label,
+      hasSchemas: conn.driver.hasSchemas,
       database: conn.currentDatabase,
       serverVersion: conn.serverVersion,
-      databases: dbs.rows.map((d) => d.datname),
-      schemas: [...schemas.entries()].map(([name, relations]) => ({ name, relations })),
+      databases,
+      schemas: [...schemas.entries()].map(([name, relations2]) => ({ name, relations: relations2 })),
     };
   }
-
 
   /**
    * Every foreign key in the database, indexed both ways.
@@ -1130,38 +945,19 @@ class Manager {
    */
   async foreignKeys(id) {
     const conn = this.get(id);
-    const { rows } = await conn.pool.query(`
-      select c.conname,
-             ns.nspname  as schema,
-             cl.relname  as tbl,
-             rns.nspname as ref_schema,
-             rcl.relname as ref_tbl,
-             (select array_agg(a.attname::text order by k.ord)
-                from unnest(c.conkey) with ordinality k(attnum, ord)
-                join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as cols,
-             (select array_agg(a.attname::text order by k.ord)
-                from unnest(c.confkey) with ordinality k(attnum, ord)
-                join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) as ref_cols
-      from pg_constraint c
-      join pg_class cl      on cl.oid  = c.conrelid
-      join pg_namespace ns  on ns.oid  = cl.relnamespace
-      join pg_class rcl     on rcl.oid = c.confrelid
-      join pg_namespace rns on rns.oid = rcl.relnamespace
-      where c.contype = 'f'
-        and ns.nspname not in ('pg_catalog', 'information_schema')
-      order by ns.nspname, cl.relname, c.conname`);
+    const rows = await conn.driver.foreignKeys(conn.pool);
 
     const outgoing = {};
     const incoming = {};
     for (const r of rows) {
-      if (!r.cols || !r.ref_cols) continue;
+      if (!r.columns || !r.ref_columns) continue;
       const fk = {
-        name: r.conname,
-        schema: r.schema, table: r.tbl, columns: r.cols,
-        refSchema: r.ref_schema, refTable: r.ref_tbl, refColumns: r.ref_cols,
+        name: r.name,
+        schema: r.schema, table: r.table, columns: r.columns,
+        refSchema: r.ref_schema, refTable: r.ref_table, refColumns: r.ref_columns,
       };
-      const from = `${r.schema}.${r.tbl}`;
-      const to = `${r.ref_schema}.${r.ref_tbl}`;
+      const from = `${r.schema}.${r.table}`;
+      const to = `${r.ref_schema}.${r.ref_table}`;
       (outgoing[from] = outgoing[from] || []).push(fk);
       (incoming[to] = incoming[to] || []).push(fk);
     }
@@ -1170,70 +966,38 @@ class Manager {
 
   async tableDdl(id, schema, table) {
     const conn = this.get(id);
-    const { rows } = await conn.pool.query(
-      `select c.oid::int as oid, c.relkind::text as kind from pg_class c
-       join pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = $1 and c.relname = $2`, [schema, table]);
-    if (!rows.length) throw new Error('Relation not found.');
-    const { oid, kind } = rows[0];
+    return conn.driver.tableDdl(conn.pool, schema, table);
+  }
 
-    if (kind === 'v' || kind === 'm') {
-      const v = await conn.pool.query('select pg_get_viewdef($1::oid, true) as def', [oid]);
-      const word = kind === 'm' ? 'MATERIALIZED VIEW' : 'VIEW';
-      return `CREATE OR REPLACE ${word} ${qnameNice(schema, table)} AS\n${v.rows[0].def}`;
+  /**
+   * What the server is doing right now. Both engines have this; the driver
+   * normalizes the columns so the panel does not care which one it is on.
+   */
+  async processList(id) {
+    const conn = this.get(id);
+    return conn.driver.processList(conn.pool);
+  }
+
+  /**
+   * Stop one of those. `terminate` closes the whole connection rather than
+   * cancelling the statement, which is the bigger hammer and is asked for
+   * separately.
+   */
+  async killQuery(id, pid, { terminate = false } = {}) {
+    const conn = this.get(id);
+    if (conn.config && conn.config.readOnly) {
+      throw new Error(`Connection "${conn.config.name || conn.id}" is marked read-only — nothing was cancelled.`);
     }
-
-    const cols = await conn.pool.query(`
-      select a.attname, format_type(a.atttypid, a.atttypmod) as type,
-             a.attnotnull as not_null,
-             pg_get_expr(d.adbin, d.adrelid) as def,
-             a.attidentity::text as identity
-      from pg_attribute a
-      left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
-      where a.attrelid = $1 and a.attnum > 0 and not a.attisdropped
-      order by a.attnum`, [oid]);
-
-    const cons = await conn.pool.query(
-      `select conname, pg_get_constraintdef(oid, true) as def from pg_constraint
-       where conrelid = $1 order by contype desc, conname`, [oid]);
-
-    const idx = await conn.pool.query(
-      `select indexdef from pg_indexes where schemaname = $1 and tablename = $2`, [schema, table]);
-
-    const lines = cols.rows.map((c) => {
-      let s = `  ${qidNice(c.attname)} ${c.type}`;
-      if (c.identity === 'a') s += ' GENERATED ALWAYS AS IDENTITY';
-      else if (c.identity === 'd') s += ' GENERATED BY DEFAULT AS IDENTITY';
-      else if (c.def) s += ` DEFAULT ${c.def}`;
-      if (c.not_null) s += ' NOT NULL';
-      return s;
-    });
-    for (const c of cons.rows) lines.push(`  CONSTRAINT ${qidNice(c.conname)} ${c.def}`);
-
-    let ddl = `CREATE TABLE ${qnameNice(schema, table)} (\n${lines.join(',\n')}\n);`;
-    // Drop index definitions that a constraint above already covers.
-    const conNames = new Set(cons.rows.map((c) => c.conname));
-    const extraIdx = idx.rows.map((r) => r.indexdef).filter((d) => {
-      const m = /^CREATE (?:UNIQUE )?INDEX ("(?:[^"]|"")+"|[^\s]+) ON /.exec(d);
-      const name = m ? m[1].replace(/^"|"$/g, '').replace(/""/g, '"') : null;
-      return !name || !conNames.has(name);
-    });
-    if (extraIdx.length) ddl += '\n\n' + extraIdx.map((d) => d + ';').join('\n');
-    return ddl;
+    return conn.driver.killQuery(conn.pool, pid, { terminate });
   }
 
   async tableStats(id, schema, table) {
     const conn = this.get(id);
-    const { rows } = await conn.pool.query(
-      `select pg_size_pretty(pg_total_relation_size($1::regclass)) as total_size,
-              (select count(*) from pg_indexes where schemaname = $2 and tablename = $3) as index_count`,
-      [`${qid(schema)}.${qid(table)}`, schema, table]
-    );
-    return rows[0];
+    return conn.driver.tableStats(conn.pool, schema, table);
   }
 }
 
 module.exports = {
-  Manager, qid, qname, buildFilteredQuery, buildPagedQuery, parseLimitTail,
+  Manager, buildFilteredQuery, buildPagedQuery, parseLimitTail,
   splitLimitTail, FILTER_OPS, isReadOnlyStatement,
 };
