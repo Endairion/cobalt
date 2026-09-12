@@ -3,6 +3,23 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.9.0 — Foreign key navigation
+*2026-09-12*
+
+Follow a value to the row it points at, or back to everything pointing at it.
+
+### Added
+- Right-click a cell to travel: a foreign key column offers the row it references, and any row offers a "Referenced by" list of the tables pointing back at it. Either opens a new tab already filtered to the matching rows.
+- Foreign key columns are marked FK in the grid header, with the table they reference in the tooltip.
+- The same menu carries filter-by-this-value, copy value and copy column name.
+- Composite keys travel as a unit, and a table with two keys to the same target keeps them separate, so each offers its own destination.
+
+### Changed
+- Foreign keys are read once per connection alongside the schema and re-read when it is refreshed.
+
+### Fixed
+- Key column names came back as the raw string "{customer_id}" rather than a list: array_agg over a name column yields name[], which the driver has no parser for. They are cast to text[] now.
+
 ## 0.8.0 — Query history
 *2026-09-12*
 

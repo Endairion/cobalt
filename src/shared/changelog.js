@@ -13,6 +13,20 @@
 
 const releases = [
   {
+    version: '0.9.0',
+    date: '2026-09-12',
+    title: 'Foreign key navigation',
+    summary: 'Follow a value to the row it points at, or back to everything pointing at it.',
+    changes: [
+      { type: 'added', text: 'Right-click a cell to travel: a foreign key column offers the row it references, and any row offers a "Referenced by" list of the tables pointing back at it. Either opens a new tab already filtered to the matching rows.' },
+      { type: 'added', text: 'Foreign key columns are marked FK in the grid header, with the table they reference in the tooltip.' },
+      { type: 'added', text: 'The same menu carries filter-by-this-value, copy value and copy column name.' },
+      { type: 'added', text: 'Composite keys travel as a unit, and a table with two keys to the same target keeps them separate, so each offers its own destination.' },
+      { type: 'changed', text: 'Foreign keys are read once per connection alongside the schema and re-read when it is refreshed.' },
+      { type: 'fixed', text: 'Key column names came back as the raw string "{customer_id}" rather than a list: array_agg over a name column yields name[], which the driver has no parser for. They are cast to text[] now.' },
+    ],
+  },
+  {
     version: '0.8.0',
     date: '2026-09-12',
     title: 'Query history',

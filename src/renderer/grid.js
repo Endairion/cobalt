@@ -31,13 +31,14 @@ function textWidth(s, font) {
 const NULL_TOKEN = Symbol('null');
 
 export class ResultGrid {
-  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, readOnly = false } = {}) {
+  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, onCellMenu, readOnly = false } = {}) {
     this.host = host;
     this.onDirtyChange = onDirtyChange || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onFilter = onFilter || (() => {});
     this.onSort = onSort || (() => {});
     this.onNeedMore = onNeedMore || (() => {});
+    this.onCellMenu = onCellMenu || (() => {});
     this.loadingMore = false;
     this.readOnly = readOnly;
     this.filterVisible = false;
@@ -82,6 +83,16 @@ export class ResultGrid {
     this.el.addEventListener('mousedown', (e) => this.onMouseDown(e));
     this.el.addEventListener('dblclick', (e) => this.onDoubleClick(e));
     this.el.addEventListener('keydown', (e) => this.onKeyDown(e));
+    this.el.addEventListener('contextmenu', (e) => {
+      const cell = e.target.closest('.gc[data-col]');
+      if (!cell) return;
+      e.preventDefault();
+      const row = Number(cell.parentElement.dataset.row);
+      const col = Number(cell.dataset.col);
+      this.commitEditor();
+      this.setCursor(row, col);
+      this.onCellMenu(row, col, { left: e.clientX, top: e.clientY, bottom: e.clientY });
+    });
     this.head.addEventListener('click', (e) => this.onHeadClick(e));
     this.head.addEventListener('mousedown', (e) => this.onHeadMouseDown(e));
 
@@ -180,6 +191,17 @@ export class ResultGrid {
   }
 
   /* ----------------------------- data ----------------------------- */
+
+  /** Column name -> the foreign key it belongs to, for the header marker. */
+  setForeignKeys(outgoing) {
+    this.fkByColumn = new Map();
+    for (const fk of outgoing || []) {
+      // Only single-column keys get a header marker; composite ones still work
+      // from the context menu, where every part can be shown.
+      if (fk.columns.length === 1) this.fkByColumn.set(fk.columns[0], fk);
+    }
+    if (this.columns.length) this.renderHead();
+  }
 
   load(result, { keepFilters = false, append = false } = {}) {
     // Appending the next page must not disturb what is already on screen: the
@@ -310,10 +332,12 @@ export class ResultGrid {
     const parts = [`<div class="gh rownum" style="width:${NUM_W}px">#</div>`];
     this.columns.forEach((c, i) => {
       const pk = this.result && this.result.key && this.result.key.includes(i);
+      const fk = this.fkByColumn && this.fkByColumn.get(c.sourceColumn || c.name);
       const arrow = this.sort && this.sort.name === c.name ? (this.sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
       parts.push(
         `<div class="gh" data-col="${i}" style="width:${this.widths[i]}px" title="${esc(c.name)}${c.dataType ? ' · ' + esc(c.dataType) : ''}">` +
         (pk ? '<span class="gh-pk">PK</span>' : '') +
+        (fk ? `<span class="gh-fk" title="references ${escAttr(fk.refSchema)}.${escAttr(fk.refTable)}">FK</span>` : '') +
         `<span class="gh-name">${esc(c.name)}${arrow}</span>` +
         (c.dataType ? `<span class="gh-type">${esc(shortType(c.dataType))}</span>` : '') +
         `<span class="gh-resize" data-resize="${i}"></span></div>`

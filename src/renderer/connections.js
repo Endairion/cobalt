@@ -6,6 +6,8 @@
  * needs through `wire()`, which keeps app.js the single source of truth.
  */
 
+import { showMenu } from './menu.js';
+
 let ctx = null;
 
 export function wire(context) { ctx = context; }
@@ -51,39 +53,6 @@ export function openConnectionMenu(savedId, anchor) {
   showMenu(items, anchor);
 }
 
-function showMenu(items, anchor) {
-  document.querySelectorAll('.ctx-menu').forEach((n) => n.remove());
-  const menu = document.createElement('div');
-  menu.className = 'ctx-menu';
-  menu.innerHTML = items.map((it, i) => it.sep
-    ? '<div class="ctx-sep"></div>'
-    : `<div class="ctx-item${it.danger ? ' danger' : ''}" data-i="${i}">${esc(it.label)}</div>`).join('');
-  document.body.append(menu);
-
-  const r = anchor.getBoundingClientRect();
-  menu.style.left = `${Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)}px`;
-  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
-
-  const close = () => {
-    menu.remove();
-    document.removeEventListener('mousedown', onDown, true);
-    document.removeEventListener('keydown', onKey, true);
-  };
-  const onDown = (e) => { if (!menu.contains(e.target)) close(); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  setTimeout(() => {
-    document.addEventListener('mousedown', onDown, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
-
-  menu.addEventListener('click', (e) => {
-    const row = e.target.closest('[data-i]');
-    if (!row) return;
-    const item = items[Number(row.dataset.i)];
-    close();
-    item.run();
-  });
-}
 
 /* --------------------------- the manager --------------------------- */
 

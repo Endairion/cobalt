@@ -937,3 +937,18 @@ tr.best .bar-fill { background: var(--green); }
 }
 .hist-meta b { color: var(--text-faint); font-weight: 400; margin-right: 6px; }
 .hist-err { color: var(--red); }
+
+.gh-fk { color: var(--cyan); font-size: 9px; font-weight: 700; letter-spacing: .3px; }
+.ctx-header {
+  padding: 6px 10px 3px; color: var(--text-faint);
+  font-size: 9.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+}
+.ctx-item { display: flex; align-items: baseline; gap: 10px; }
+.ctx-item .ctx-label { flex: none; }
+.ctx-item .ctx-sub {
+  margin-left: auto; color: var(--text-faint); font-size: 10.5px;
+  font-family: var(--mono); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 220px;
+}
+.ctx-item.disabled { opacity: .42; cursor: default; }
+.ctx-item.disabled:hover { background: none; }

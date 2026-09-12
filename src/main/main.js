@@ -276,6 +276,7 @@ handle('conn:open', async (savedId, overrides) => {
 
 handle('conn:close', (id) => manager.close(id));
 handle('conn:schema', (id) => manager.schemaTree(id));
+handle('conn:fks', (id) => manager.foreignKeys(id));
 handle('conn:ddl', (id, schema, table) => manager.tableDdl(id, schema, table));
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));
 
