@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.10.0',
+    date: '2026-09-12',
+    title: 'The menu comes back',
+    summary: 'Frameless removed the menu bar, and with it the way to find anything.',
+    changes: [
+      { type: 'added', text: 'A menu button at the left of the tab strip opens File, Edit, Query, Go, View and Help as a cascading menu, each item showing its keyboard shortcut. Going frameless had left every feature reachable only by a shortcut you had to already know.' },
+      { type: 'added', text: 'Explain, Benchmark and History now have buttons in the editor toolbar, plus an overflow button that opens the Query menu where the grid actions live.' },
+      { type: 'changed', text: 'The menu is defined once, in shared/commands.js. The main process builds the Electron menu from it (which is what registers the accelerators even though no menu bar is drawn) and the app renders the same tree. A test asserts every command in it is handled and every role is performed, so a menu entry cannot quietly do nothing.' },
+      { type: 'added', text: 'The test harness can press real keys, which is how the accelerators are checked to still reach the app on a frameless window rather than assumed to.' },
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2026-09-12',
     title: 'Foreign key navigation',

@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('cobalt', {
   },
   app: {
     info: () => call('app:info'),
+    role: (name) => call('app:role', name),
     unseenReleases: () => call('app:unseenReleases'),
   },
   history: {

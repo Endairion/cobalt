@@ -10,17 +10,20 @@
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export function showMenu(items, anchor) {
-  document.querySelectorAll('.ctx-menu').forEach((n) => n.remove());
+export function showMenu(items, anchor, opts = {}) {
+  // Only a top-level menu clears the field; a submenu sits alongside its parent.
+  if (!opts.parent) document.querySelectorAll('.ctx-menu').forEach((n) => n.remove());
 
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.innerHTML = items.map((it, i) => {
     if (it.sep) return '<div class="ctx-sep"></div>';
     if (it.header) return `<div class="ctx-header">${esc(it.header)}</div>`;
-    return `<div class="ctx-item${it.danger ? ' danger' : ''}${it.disabled ? ' disabled' : ''}" ${it.disabled ? '' : `data-i="${i}"`}>
+    const kids = it.items && it.items.length;
+    return `<div class="ctx-item${it.danger ? ' danger' : ''}${it.disabled ? ' disabled' : ''}${kids ? ' has-sub' : ''}" ${it.disabled ? '' : `data-i="${i}"`}>
       <span class="ctx-label">${esc(it.label)}</span>
       ${it.sub ? `<span class="ctx-sub">${esc(it.sub)}</span>` : ''}
+      ${kids ? '<span class="ctx-arrow">›</span>' : ''}
     </div>`;
   }).join('');
   document.body.append(menu);
@@ -36,22 +39,54 @@ export function showMenu(items, anchor) {
   menu.style.top = `${top}px`;
 
   const close = () => {
+    closeChild();
     menu.remove();
     document.removeEventListener('mousedown', onDown, true);
     document.removeEventListener('keydown', onKey, true);
   };
-  const onDown = (e) => { if (!menu.contains(e.target)) close(); };
+  const closeAll = () => { if (opts.parent) document.querySelectorAll('.ctx-menu').forEach((n) => n.remove()); else close(); };
+  const onDown = (e) => {
+    if (menu.contains(e.target)) return;
+    if (opts.parent && opts.parent.contains(e.target)) return;   // the parent handles it
+    close();
+  };
   const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
   setTimeout(() => {
     document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey, true);
   }, 0);
 
+  // Nested items open a second menu beside the row, the way a menu bar does.
+  let child = null;
+  const closeChild = () => { if (child) { child(); child = null; } };
+
+  menu.addEventListener('mousemove', (e) => {
+    const row = e.target.closest('[data-i]');
+    if (!row) return;
+    const item = items[Number(row.dataset.i)];
+    if (!item || !item.items || !item.items.length) {
+      if (menu.dataset.openSub && menu.dataset.openSub !== row.dataset.i) {
+        closeChild();
+        delete menu.dataset.openSub;
+        menu.querySelectorAll('.ctx-item.open').forEach((n) => n.classList.remove('open'));
+      }
+      return;
+    }
+    if (menu.dataset.openSub === row.dataset.i) return;
+    closeChild();
+    menu.querySelectorAll('.ctx-item.open').forEach((n) => n.classList.remove('open'));
+    row.classList.add('open');
+    menu.dataset.openSub = row.dataset.i;
+    const r2 = row.getBoundingClientRect();
+    child = showMenu(item.items, { left: r2.right - 4, top: r2.top - 5, bottom: r2.top - 5 }, { parent: menu });
+  });
+
   menu.addEventListener('click', (e) => {
     const row = e.target.closest('[data-i]');
     if (!row) return;
     const item = items[Number(row.dataset.i)];
-    close();
+    if (item.items && item.items.length) return;   // a group header, not an action
+    closeAll();
     item.run();
   });
 
