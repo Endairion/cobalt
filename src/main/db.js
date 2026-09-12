@@ -4,6 +4,7 @@ const { isReadOnlyStatement } = require('../shared/sqlkind');
 const { validateWhere } = require('../shared/whereclause');
 const { Tunnel } = require('./tunnel');
 const { driverFor } = require('./drivers');
+const { buildSearchQuery, buildRowFilter, searchableColumns } = require('../shared/dbsearch');
 const postgres = require('./drivers/postgres');
 
 /* ------------------------------------------------------------------ */
@@ -973,6 +974,108 @@ class Manager {
    * What the server is doing right now. Both engines have this; the driver
    * normalizes the columns so the panel does not care which one it is on.
    */
+  /**
+   * Find a value anywhere in the database.
+   *
+   * Nothing here can use an index, so the cost is real and the work is bounded
+   * on purpose: a row cap per table, views skipped (scanning one re-runs its
+   * query over tables already being scanned), and a check between tables so
+   * Cancel actually stops it rather than stopping the next query only.
+   *
+   * One table failing — a permission, a type that will not cast — is recorded
+   * and the search carries on. Half an answer beats none.
+   */
+  async searchDatabase(id, tabKey, {
+    needle, mode = 'contains', caseSensitive = false, includeNumeric = false,
+    rowCap = 50000, schemas = null, maxMatches = 500,
+  } = {}) {
+    const text = String(needle == null ? '' : needle);
+    if (!text.length) throw new Error('Type something to look for.');
+
+    const conn = this.get(id);
+    const d = conn.driver;
+    const session = conn.session(tabKey);
+    if (session.busy) throw new Error('This tab is already running a query.');
+    const client = await session.ensure();
+    session.cancelRequested = false;
+    session.busy = true;
+
+    const began = Date.now();
+    const tree = await this.schemaTree(id);
+    const targets = [];
+    let skippedViews = 0;
+
+    for (const sch of tree.schemas) {
+      if (schemas && schemas.length && !schemas.includes(sch.name)) continue;
+      for (const rel of sch.relations) {
+        if (rel.kind !== 'r' && rel.kind !== 'p') { skippedViews++; continue; }
+        const columns = searchableColumns(rel, { includeNumeric });
+        if (columns.length) targets.push({ schema: sch.name, table: rel.name, columns });
+      }
+    }
+
+    const matches = [];
+    const errors = [];
+    let scannedTables = 0;
+    let cancelled = false;
+
+    try {
+      for (const t of targets) {
+        if (session.cancelRequested) { cancelled = true; break; }
+        let built;
+        try {
+          built = buildSearchQuery({
+            dialect: d, schema: t.schema, table: t.table, columns: t.columns,
+            needle: text, mode, caseSensitive, rowCap,
+          });
+        } catch (err) { errors.push({ schema: t.schema, table: t.table, message: err.message }); continue; }
+
+        try {
+          const [r] = await d.query(client, built.text, built.values);
+          scannedTables++;
+          const row = r.rows[0] || [];
+          const scanned = Number(row[row.length - 1] || 0);
+          t.columns.forEach((c, i) => {
+            const count = Number(row[i * 2] || 0);
+            if (!count) return;
+            matches.push({
+              schema: t.schema,
+              table: t.table,
+              column: c.name,
+              type: c.type,
+              count,
+              sample: row[i * 2 + 1],
+              scanned,
+              capped: rowCap ? scanned >= rowCap : false,
+            });
+          });
+        } catch (err) {
+          errors.push({ schema: t.schema, table: t.table, message: (err && err.message) || String(err) });
+        }
+        if (matches.length >= maxMatches) break;
+      }
+    } finally {
+      session.busy = false;
+    }
+
+    matches.sort((a, b) => b.count - a.count || a.table.localeCompare(b.table));
+    return {
+      needle: text, mode, caseSensitive, includeNumeric, rowCap,
+      matches: matches.slice(0, maxMatches),
+      errors,
+      scannedTables,
+      totalTables: targets.length,
+      skippedViews,
+      cancelled,
+      elapsedMs: Date.now() - began,
+    };
+  }
+
+  /** The WHERE clause that opens a table on the rows a match came from. */
+  searchFilter(id, { column, needle, mode = 'contains', caseSensitive = false }) {
+    return buildRowFilter({ dialect: this.get(id).driver, column, needle, mode, caseSensitive });
+  }
+
   async serverStats(id) {
     const conn = this.get(id);
     const stats = await conn.driver.serverStats(conn.pool);

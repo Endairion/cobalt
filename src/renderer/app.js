@@ -14,6 +14,7 @@ import * as schemaops from './schemaops.js';
 import * as transfer from './transfer.js';
 import * as processes from './processes.js';
 import * as health from './health.js';
+import * as dbsearch from './dbsearch.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -482,6 +483,32 @@ function findColumn(conn, schema, table, colName) {
   return rel ? rel.columns.find((c) => c.name === colName) || null : null;
 }
 
+dbsearch.wire({
+  showOverlay: (node, opts) => showOverlay(node, opts),
+  search: (connId, opts) => api.connections.search(connId, `search:${connId}`, opts),
+  // Stop between tables: the running query is cancelled on its own session and
+  // the loop notices, rather than the search carrying on regardless.
+  cancel: (connId) => api.query.cancel(connId, `search:${connId}`),
+  connName: (connId) => {
+    const c = state.conns.get(connId);
+    return c ? `${c.name} · ${c.database}` : '';
+  },
+  openMatch: async (connId, match, how) => {
+    try {
+      const where = await api.connections.searchFilter(connId, {
+        column: match.column, needle: how.needle, mode: how.mode, caseSensitive: how.caseSensitive,
+      });
+      openTableTab(match.schema, match.table, connId);
+      // The tab has to finish its first query before a filter means anything.
+      await waitForResult();
+      showFilterBar();
+      el.fbInput.value = where;
+      await applyWhere(where);
+    } catch (err) { toast(err.message, 'err'); }
+  },
+  toast: (m, kind) => toast(m, kind),
+});
+
 health.wire({
   showOverlay: (node, opts) => showOverlay(node, opts),
   stats: (connId) => api.connections.serverStats(connId),
@@ -691,6 +718,20 @@ el.filter.addEventListener('input', () => {
 function openTableTab(schema, name, connId) {
   const sql = `select *\nfrom ${qrel(schema, name)};`;
   newTab({ title: name, sql, run: true, kind: 'data', connId: connId || state.activeConnId });
+}
+
+/** Wait for the active tab to have a result to filter, or give up quietly. */
+function waitForResult(timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = () => {
+      const tab = activeTab();
+      if (tab && tab.pageState && !tab.running) return resolve(true);
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 80);
+    };
+    tick();
+  });
 }
 
 /* ----------------------------- running ----------------------------- */
@@ -2551,6 +2592,10 @@ function menuCommand(cmd) {
     case 'grid:inspect': toggleInspector(); break;
     case 'result:export': exportResult(); break;
     case 'history:open': history.openHistory(); break;
+    case 'search:database':
+      if (state.activeConnId) dbsearch.openSearch(state.activeConnId);
+      else toast('Connect to a database first.', 'err');
+      break;
     case 'server:health':
       if (state.activeConnId) health.openHealth(state.activeConnId);
       else toast('Connect to a database first.', 'err');

@@ -3,6 +3,22 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.20.0 — Find in database
+*2026-09-13*
+
+Where is that value actually stored?
+
+### Added
+- Ctrl+Shift+G looks for a value in every text column of every table and reports which table and column held it, how many rows matched, and an example with the match highlighted. Clicking a hit opens that table with the filter already applied, so you land on the rows rather than on a list.
+- Numbers and dates are off by default, because "1" would otherwise match half the database; one tick brings them in. Contains, exactly, and starts-with, with an optional case match. Binary columns are never searched - a hex haystack helps nobody.
+
+### Changed
+- Nothing here can use an index, so the work is bounded and the panel says so: a row cap per table, marked on any count that hit it, so "858+" is never mistaken for the whole table. Views are skipped, since scanning one re-runs its query over tables already being scanned. A table that cannot be read is reported rather than silently dropped.
+- The needle is a literal, not a pattern. Searching for 100% finds the string and not every row: the LIKE wildcards are escaped with a character that needs no quoting on either engine, which a backslash would.
+
+### Fixed
+- An unrecognised row cap fell through to scanning every row - the most expensive setting, and a poor one to reach by accident. It now falls back to the default.
+
 ## 0.19.0 — Health and memory
 *2026-09-13*
 

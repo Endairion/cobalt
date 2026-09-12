@@ -41,7 +41,16 @@ inspector, export and import. MySQL has no schemas, so the connected database fi
 slot and the tree keeps its three levels. Everything engine-specific lives in
 `src/main/drivers`; adding another means adding a file there and nothing in the renderer.
 
-**Health and memory.** `Ctrl+Shift+M` puts the two halves of "why is this slow" side by
+**Find in database.** `Ctrl+Shift+G` looks for a value in every text column of every
+table and says which table and column held it, how many rows matched, and shows an
+example with the match highlighted. Clicking a hit opens that table with the filter
+already applied. Numbers and dates are opt-in (`1` would otherwise match half the
+database) and binary is never searched. Nothing here can use an index, so the work is
+bounded by a row cap per table and any count that hit it is marked - `858+` is never
+mistaken for the whole table. The needle is a literal: searching `100%` finds the string,
+not every row.
+
+**Health and memory. `Ctrl+Shift+M` puts the two halves of "why is this slow" side by
 side: database size, cache hit ratio, connections against the limit and the memory
 settings that decide memory speed or disk speed - and next to it what Cobalt costs, per
 process, plus how many rows this window is holding. Below that: the biggest tables split
@@ -191,6 +200,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+Shift+X` | Export the result |
 | `Ctrl+Shift+L` | Server activity |
 | `Ctrl+Shift+M` | Health and memory |
+| `Ctrl+Shift+G` | Find in database |
 | `Ctrl+Shift+K` / `Ctrl+Alt+K` | Format statement / whole script |
 | `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
@@ -226,6 +236,7 @@ node test/where.test.js    # 18 checks: what an expression may contain, and may 
 node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
 node test/sqlformat.test.js # 45 checks: tokenizing, layout, and never changing meaning
 node test/health.test.js   # 17 checks: the health snapshot on both engines
+node test/dbsearch.test.js # 33 checks: the search SQL, and finding things on both engines
 node test/csv.test.js      # 35 checks: CSV round trips, JSON/SQL/Markdown export
 node test/tunnel.test.js   # 19 checks: forwarding against a real in-process SSH server
 node test/sshdb.test.js    # 13 checks: Postgres through a tunnel - query, cancel, commit
@@ -253,6 +264,7 @@ node test/sshui.js        # the tunnel dialog, and the app connecting through a 
 node test/enginesui.js    # the engine picker, MySQL end to end, server activity
 node test/formatui.js     # formatting one statement, a script, and what it leaves alone
 node test/healthui.js     # the health panel on both engines, and what it counts
+node test/searchui.js     # searching, what it reports, and opening a hit
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -284,6 +296,7 @@ src/shared/
   valueview.js  classifying and formatting one cell value
   ddl.js        the SQL the schema actions generate
   sqlformat.js  tokenizer and layout, guaranteed not to change meaning
+  dbsearch.js   the search query, and which columns are worth looking in
   csv.js        a real CSV parser and writer
   exporters.js  a result as CSV, TSV, JSON, SQL or Markdown
   sqlkind.js    whether a statement only reads
@@ -310,6 +323,7 @@ src/renderer/
   transfer.js   the export dialog and the CSV import dialog
   processes.js  the server activity panel
   health.js     server and app health, side by side
+  dbsearch.js   the find-in-database panel
   filter.js     filter expression parser
 ```
 
