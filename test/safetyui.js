@@ -124,14 +124,13 @@ const HELP = `
     await runQuery();
     document.querySelector('[data-act="filter"]').click();
     await w(400);
-    const label = (document.querySelector('.gf-label') || {}).textContent || '';
-    const input = document.querySelector('input[data-filter="1"]');
-    input.value = "'user123@example.com'";
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const input = document.getElementById('fb-input');
+    const focused = document.activeElement === input;
+    input.value = "email = 'user123@example.com'";
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await w(1600);
+    await w(1800);
     return {
-      label,
+      focused,
       dirty: window.__cobaltDirty(),
       rows: window.__cobaltGridRows(),
       barShown: !document.getElementById('pending-bar').hidden
@@ -139,7 +138,7 @@ const HELP = `
   })()`);
   if (!filter.ok) fails++;
   const f = readJs(filter.out);
-  expect(f.label === 'filter', `the filter row says what it is (got "${f.label}")`);
+  expect(f.focused === true, 'the caret goes straight into the filter bar');
   expect(f.rows === 1, `it narrowed to the one matching row (got ${f.rows})`);
   expect(f.dirty === 0, `and staged no changes (got ${f.dirty})`);
   expect(f.barShown === false, 'so no pending bar appears');

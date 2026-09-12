@@ -81,6 +81,14 @@
         <div class="result-pane" id="result-pane">
           <div class="data-head" id="data-head" hidden></div>
           <div class="result-tabs" id="result-tabs"></div>
+          <div class="filter-bar" id="filter-bar" hidden>
+            <span class="fb-label">where</span>
+            <input id="fb-input" type="text" spellcheck="false"
+                   placeholder="balance &gt; 500 and email ilike '%user1%'" />
+            <span class="fb-msg" id="fb-msg"></span>
+            <button class="btn small primary" data-fb="apply">Apply</button>
+            <button class="btn small ghost" data-fb="clear">Clear</button>
+          </div>
           <div class="grid-toolbar" id="grid-toolbar"></div>
           <div class="pending-bar" id="pending-bar" hidden></div>
           <div class="grid-host" id="grid-host"></div>

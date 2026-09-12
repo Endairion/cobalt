@@ -103,30 +103,28 @@ const expect = (cond, label) => {
   const geom = await run('chrome-grid.png', ['query:run'], `(async () => {
     const head = () => document.querySelector('.grid-head').getBoundingClientRect();
     const firstRow = () => document.querySelector('.grow').getBoundingClientRect();
-    const filter = () => document.querySelector('.grid-filter');
+    const bar = () => document.getElementById('filter-bar');
 
-    const collapsedGap = Math.round(firstRow().top - head().bottom);
-    const collapsedHeight = Math.round(filter().getBoundingClientRect().height);
+    const gap = Math.round(firstRow().top - head().bottom);
+    const headerHeight = Math.round(head().height);
+    const closedHeight = Math.round(bar().getBoundingClientRect().height);
 
+    // The filter bar lives above the grid, so opening it must not push rows
+    // away from the header.
     document.querySelector('[data-act="filter"]').click();
     await ${wait(400)};
     const openGap = Math.round(firstRow().top - head().bottom);
-    const openHeight = Math.round(filter().getBoundingClientRect().height);
-    const inputs = document.querySelectorAll('input[data-filter]').length;
+    const openHeight = Math.round(bar().getBoundingClientRect().height);
 
-    document.querySelector('[data-act="filter"]').click();
-    await ${wait(500)};
-    const reclosedGap = Math.round(firstRow().top - head().bottom);
-
-    return { collapsedGap, collapsedHeight, openGap, openHeight, inputs, reclosedGap };
+    return { gap, headerHeight, closedHeight, openGap, openHeight };
   })()`);
   if (!geom.ok) fails++;
   const g = readJs(geom.out);
-  expect(g.collapsedHeight === 0, `a hidden filter row takes no space (got ${g.collapsedHeight}px)`);
-  expect(g.collapsedGap === 0, `rows start right under the header (got ${g.collapsedGap}px)`);
-  expect(g.openHeight === 26 && g.openGap === 26, `opening it inserts exactly one row band (got ${g.openGap}px)`);
-  expect(g.inputs > 0, 'the filter row has inputs when open');
-  expect(g.reclosedGap === 0, `closing it gives the space back (got ${g.reclosedGap}px)`);
+  expect(g.gap === 0, `rows start right under the header (got ${g.gap}px)`);
+  expect(g.headerHeight === 26, `the header is one band tall (got ${g.headerHeight}px)`);
+  expect(g.closedHeight === 0, `a closed filter bar takes no space (got ${g.closedHeight}px)`);
+  expect(g.openHeight > 20, `opening it gives it height (got ${g.openHeight}px)`);
+  expect(g.openGap === 0, `and the rows stay under the header (got ${g.openGap}px)`);
 
   console.log(`\n${fails ? fails + ' failed' : 'all checks passed'}\n`);
   process.exit(fails ? 1 : 0);

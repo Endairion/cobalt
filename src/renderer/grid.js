@@ -6,11 +6,8 @@
  * by the app with the change set this grid produces.
  */
 
-import { parseFilter } from './filter.js';
-
 const ROW_H = 24;
 const HEAD_H = 26;
-const FILTER_H = 26;
 const NUM_W = 52;
 const MIN_W = 54;
 const MAX_AUTO_W = 380;
@@ -42,9 +39,7 @@ export class ResultGrid {
     this.onCellMenu = onCellMenu || (() => {});
     this.loadingMore = false;
     this.readOnly = readOnly;
-    this.filterVisible = false;
-    this.filterText = new Map();   // colIndex -> raw text the user typed
-    this.filterError = new Map();  // colIndex -> parse error
+    this.hiddenCols = new Set();   // column indexes the viewer chose to hide
 
     this.result = null;
     this.columns = [];
@@ -69,12 +64,9 @@ export class ResultGrid {
     this.inner.className = 'grid-inner';
     this.head = document.createElement('div');
     this.head.className = 'grid-head';
-    this.filterRow = document.createElement('div');
-    this.filterRow.className = 'grid-filter';
-    this.filterRow.hidden = true;
     this.body = document.createElement('div');
     this.body.className = 'grid-body';
-    this.inner.append(this.head, this.filterRow, this.body);
+    this.inner.append(this.head, this.body);
     this.el.append(this.inner);
     host.append(this.el);
 
@@ -98,98 +90,33 @@ export class ResultGrid {
     this.head.addEventListener('click', (e) => this.onHeadClick(e));
     this.head.addEventListener('mousedown', (e) => this.onHeadMouseDown(e));
 
-    this.filterRow.addEventListener('input', (e) => {
-      const input = e.target.closest('input[data-filter]');
-      if (!input) return;
-      this.filterText.set(Number(input.dataset.filter), input.value);
-    });
-    this.filterRow.addEventListener('keydown', (e) => {
-      const input = e.target.closest('input[data-filter]');
-      if (!input) return;
-      if (e.key === 'Enter') { e.preventDefault(); this.applyFilters(); }
-      else if (e.key === 'Escape') {
-        e.preventDefault();
-        if (input.value) { input.value = ''; this.filterText.delete(Number(input.dataset.filter)); }
-        else this.toggleFilter(false);
-      }
-    });
   }
 
-  /* ------------------------------ filters ------------------------------ */
+  /* ------------------------ column visibility ------------------------ */
 
-  headOffset() { return HEAD_H + (this.filterVisible ? FILTER_H : 0); }
+  headOffset() { return HEAD_H; }
 
-  toggleFilter(show) {
-    this.filterVisible = show === undefined ? !this.filterVisible : !!show;
-    this.filterRow.hidden = !this.filterVisible;
-    if (!this.filterVisible && this.filterText.size) {
-      this.filterText.clear();
-      this.filterError.clear();
-      this.applyFilters();
+  /** Indexes of the columns actually drawn, in display order. */
+  get visibleCols() {
+    const out = [];
+    for (let i = 0; i < this.columns.length; i++) if (!this.hiddenCols.has(i)) out.push(i);
+    return out;
+  }
+
+  setHidden(indexes) {
+    this.hiddenCols = new Set(indexes);
+    // Never hide every column; an empty grid is not a useful thing to look at.
+    if (this.columns.length && this.hiddenCols.size >= this.columns.length) this.hiddenCols.delete(0);
+    if (this.hiddenCols.has(this.cursor.col)) {
+      const first = this.visibleCols[0];
+      if (first !== undefined) this.cursor.col = first;
     }
     this.render();
-    if (this.filterVisible) {
-      const first = this.filterRow.querySelector('input[data-filter]:not([disabled])');
-      if (first) first.focus();
-    }
   }
 
   /** Column names that appear more than once can't be referenced unambiguously. */
   ambiguous(name) {
     return this.columns.filter((c) => c.name === name).length > 1;
-  }
-
-  /** Parse every box; hand the caller the specs, or surface the first bad one. */
-  applyFilters() {
-    const specs = [];
-    this.filterError.clear();
-    for (const [col, text] of this.filterText) {
-      if (!String(text).trim()) continue;
-      const column = this.columns[col];
-      if (!column) continue;
-      const parsed = parseFilter(text, column);
-      if (!parsed) continue;
-      if (parsed.error) { this.filterError.set(col, parsed.error); continue; }
-      specs.push({ ...parsed, name: column.name, column: col });
-    }
-    this.renderFilterRow();
-    if (this.filterError.size) {
-      this.onStatus([...this.filterError.values()][0]);
-      return;
-    }
-    this.onFilter(specs);
-  }
-
-  activeFilters() {
-    return [...this.filterText.entries()].filter(([, v]) => String(v).trim()).length;
-  }
-
-  clearFilters() {
-    this.filterText.clear();
-    this.filterError.clear();
-    this.renderFilterRow();
-    this.onFilter([]);
-  }
-
-  renderFilterRow() {
-    if (!this.columns.length) { this.filterRow.innerHTML = ''; return; }
-    const parts = [`<div class="gf rownum" style="width:${NUM_W}px"><span class="gf-label">filter</span></div>`];
-    this.columns.forEach((c, i) => {
-      const amb = this.ambiguous(c.name);
-      const err = this.filterError.get(i);
-      const val = this.filterText.get(i) || '';
-      const title = amb
-        ? `"${c.name}" appears more than once in this result, so it can't be filtered unambiguously`
-        : (err || `Filter ${c.name} — try: bob · >= 100 · != draft · %ob% · in a, b · null`);
-      parts.push(
-        `<div class="gf${err ? ' err' : ''}" style="width:${this.widths[i]}px">` +
-        `<input type="text" data-filter="${i}" value="${escAttr(val)}" spellcheck="false"` +
-        ` ${amb ? 'disabled' : ''} placeholder="${amb ? '—' : 'filter'}" title="${escAttr(title)}" /></div>`
-      );
-    });
-    this.filterRow.innerHTML = parts.join('');
-    this.filterRow.style.width = `${this.totalWidth()}px`;
-    this.filterRow.style.top = `${HEAD_H}px`;
   }
 
   /* ----------------------------- data ----------------------------- */
@@ -219,7 +146,9 @@ export class ResultGrid {
       return;
     }
 
-    if (!keepFilters) { this.filterText.clear(); this.filterError.clear(); }
+    const sameShape = this.columns.length === (result.columns || []).length
+      && this.columns.every((c, i) => c.name === result.columns[i].name);
+    if (!sameShape) this.hiddenCols = new Set();   // a different result, a different set of columns
     this.result = result;
     this.columns = result.columns || [];
     this.rows = result.rows || [];
@@ -329,19 +258,19 @@ export class ResultGrid {
 
   render() {
     this.renderHead();
-    if (this.filterVisible) this.renderFilterRow();
     this.body.style.height = `${this.totalRows() * ROW_H}px`;
     this.inner.style.width = `${this.totalWidth()}px`;
     this.renderRows();
   }
 
   totalWidth() {
-    return NUM_W + this.widths.reduce((a, b) => a + b, 0);
+    return NUM_W + this.visibleCols.reduce((a, i) => a + (this.widths[i] || 0), 0);
   }
 
   renderHead() {
     const parts = [`<div class="gh rownum" style="width:${NUM_W}px">#</div>`];
-    this.columns.forEach((c, i) => {
+    this.visibleCols.forEach((i) => {
+      const c = this.columns[i];
       const pk = this.result && this.result.key && this.result.key.includes(i);
       const fk = this.fkByColumn && this.fkByColumn.get(c.sourceColumn || c.name);
       const arrow = this.sort && this.sort.name === c.name ? (this.sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
@@ -377,7 +306,7 @@ export class ResultGrid {
       const ref = this.at(d);
       const label = ref.kind === 'new' ? '+' : String(d + 1);
       out.push(`<div class="gc rownum" style="width:${NUM_W}px">${label}</div>`);
-      for (let c = 0; c < this.columns.length; c++) {
+      for (const c of this.visibleCols) {
         const v = this.valueAt(d, c);
         const isNull = v === null || v === undefined;
         const numeric = NUMERIC_OIDS.has(this.columns[c].dataTypeID);
@@ -456,13 +385,26 @@ export class ResultGrid {
 
   setCursor(row, col, { scroll = false } = {}) {
     const total = this.totalRows();
-    this.cursor = {
-      row: Math.max(0, Math.min(total - 1, row)),
-      col: Math.max(0, Math.min(this.columns.length - 1, col)),
-    };
+    const vis = this.visibleCols;
+    let nextCol = Math.max(0, Math.min(this.columns.length - 1, col));
+    if (this.hiddenCols.has(nextCol) && vis.length) {
+      // Land on the nearest column that is actually on screen.
+      nextCol = vis.reduce((best, i) =>
+        Math.abs(i - nextCol) < Math.abs(best - nextCol) ? i : best, vis[0]);
+    }
+    this.cursor = { row: Math.max(0, Math.min(total - 1, row)), col: nextCol };
     if (scroll) this.scrollToCursor();
     this.renderRows();
     this.emitCellStatus();
+  }
+
+  /** Move the cursor by whole visible columns, so hidden ones are skipped. */
+  stepCol(delta) {
+    const vis = this.visibleCols;
+    if (!vis.length) return;
+    const at = vis.indexOf(this.cursor.col);
+    const next = vis[Math.max(0, Math.min(vis.length - 1, (at === -1 ? 0 : at) + delta))];
+    this.setCursor(this.cursor.row, next, { scroll: true });
   }
 
   emitCellStatus() {
@@ -483,7 +425,10 @@ export class ResultGrid {
     else if (top + ROW_H > viewBottom) this.el.scrollTop = top + ROW_H - this.el.clientHeight + this.headOffset();
 
     let x = NUM_W;
-    for (let i = 0; i < this.cursor.col; i++) x += this.widths[i];
+    for (const i of this.visibleCols) {
+      if (i >= this.cursor.col) break;
+      x += this.widths[i] || 0;
+    }
     const w = this.widths[this.cursor.col] || 0;
     if (x < this.el.scrollLeft + NUM_W) this.el.scrollLeft = Math.max(0, x - NUM_W);
     else if (x + w > this.el.scrollLeft + this.el.clientWidth) this.el.scrollLeft = x + w - this.el.clientWidth;
@@ -507,18 +452,23 @@ export class ResultGrid {
     switch (e.key) {
       case 'ArrowDown': this.setCursor(row + 1, col, { scroll: true }); e.preventDefault(); break;
       case 'ArrowUp': this.setCursor(row - 1, col, { scroll: true }); e.preventDefault(); break;
-      case 'ArrowLeft': this.setCursor(row, col - 1, { scroll: true }); e.preventDefault(); break;
-      case 'ArrowRight': this.setCursor(row, col + 1, { scroll: true }); e.preventDefault(); break;
+      case 'ArrowLeft': this.stepCol(-1); e.preventDefault(); break;
+      case 'ArrowRight': this.stepCol(1); e.preventDefault(); break;
       case 'Tab':
-        this.setCursor(row, col + (e.shiftKey ? -1 : 1), { scroll: true }); e.preventDefault(); break;
+        this.stepCol(e.shiftKey ? -1 : 1); e.preventDefault(); break;
       case 'PageDown':
         this.setCursor(row + Math.floor(this.el.clientHeight / ROW_H), col, { scroll: true }); e.preventDefault(); break;
       case 'PageUp':
         this.setCursor(row - Math.floor(this.el.clientHeight / ROW_H), col, { scroll: true }); e.preventDefault(); break;
-      case 'Home':
-        this.setCursor(mod ? 0 : row, 0, { scroll: true }); e.preventDefault(); break;
-      case 'End':
-        this.setCursor(mod ? this.totalRows() - 1 : row, this.columns.length - 1, { scroll: true }); e.preventDefault(); break;
+      case 'Home': {
+        const vis = this.visibleCols;
+        this.setCursor(mod ? 0 : row, vis[0] ?? 0, { scroll: true }); e.preventDefault(); break;
+      }
+      case 'End': {
+        const vis = this.visibleCols;
+        this.setCursor(mod ? this.totalRows() - 1 : row, vis[vis.length - 1] ?? 0, { scroll: true });
+        e.preventDefault(); break;
+      }
       case 'Enter': case 'F2':
         this.beginEdit(); e.preventDefault(); break;
       case 'Escape':
@@ -535,9 +485,10 @@ export class ResultGrid {
   }
 
   copyAllAsTsv() {
-    const lines = [this.columns.map((c) => c.name).join('\t')];
+    const vis = this.visibleCols;
+    const lines = [vis.map((i) => this.columns[i].name).join('\t')];
     for (let d = 0; d < this.totalRows(); d++) {
-      const cells = this.columns.map((_, c) => {
+      const cells = vis.map((c) => {
         const v = this.valueAt(d, c);
         return v === null ? '' : String(v).replace(/[\t\n\r]/g, ' ');
       });
@@ -548,9 +499,10 @@ export class ResultGrid {
 
   toCsv() {
     const q = (s) => (/[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s);
-    const lines = [this.columns.map((c) => q(c.name)).join(',')];
+    const vis = this.visibleCols;
+    const lines = [vis.map((i) => q(this.columns[i].name)).join(',')];
     for (let d = 0; d < this.totalRows(); d++) {
-      lines.push(this.columns.map((_, c) => {
+      lines.push(vis.map((c) => {
         const v = this.valueAt(d, c);
         return v === null ? '' : q(String(v));
       }).join(','));
