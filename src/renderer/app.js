@@ -13,6 +13,7 @@ import * as inspector from './inspector.js';
 import * as schemaops from './schemaops.js';
 import * as transfer from './transfer.js';
 import * as processes from './processes.js';
+import * as health from './health.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -480,6 +481,30 @@ function findColumn(conn, schema, table, colName) {
   const rel = findRelation(conn, schema, table);
   return rel ? rel.columns.find((c) => c.name === colName) || null : null;
 }
+
+health.wire({
+  showOverlay: (node, opts) => showOverlay(node, opts),
+  stats: (connId) => api.connections.serverStats(connId),
+  metrics: () => api.app.metrics(),
+  // What this window is actually holding, which is the other half of "why is
+  // it using that much memory".
+  grids: () => {
+    let rows = 0;
+    let dirty = 0;
+    for (const t of state.tabs) {
+      if (!t.grid) continue;
+      rows += t.grid.rows.length;
+      dirty += t.grid.dirtyCount();
+    }
+    return { tabs: state.tabs.length, rows, dirty };
+  },
+  connName: (connId) => {
+    const c = state.conns.get(connId);
+    return c ? `${c.name} · ${c.database}` : '';
+  },
+  copy: (text) => api.ui.copy(text),
+  toast: (m, kind) => toast(m, kind),
+});
 
 processes.wire({
   showOverlay: (node, opts) => showOverlay(node, opts),
@@ -2526,6 +2551,10 @@ function menuCommand(cmd) {
     case 'grid:inspect': toggleInspector(); break;
     case 'result:export': exportResult(); break;
     case 'history:open': history.openHistory(); break;
+    case 'server:health':
+      if (state.activeConnId) health.openHealth(state.activeConnId);
+      else toast('Connect to a database first.', 'err');
+      break;
     case 'server:processes':
       if (state.activeConnId) processes.openProcessList(state.activeConnId);
       else toast('Connect to a database first.', 'err');

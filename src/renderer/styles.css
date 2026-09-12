@@ -1289,3 +1289,46 @@ tr.best .bar-fill { background: var(--green); }
 .proc-act { white-space: nowrap; text-align: right; }
 .btn.danger-text { color: var(--red); }
 .btn.danger-text:hover { border-color: var(--red); }
+
+/* ---------------------------- health & memory ---------------------------- */
+
+.modal.health-modal { width: 1080px; max-width: 96vw; }
+.hl-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.hl-col h3 {
+  margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--text);
+  padding-bottom: 5px; border-bottom: 1px solid var(--border);
+}
+.hl-col h4, .hl-table h4 {
+  margin: 14px 0 6px; font-size: 11px; font-weight: 500;
+  color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em;
+}
+.hl-stat {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline;
+  gap: 8px; padding: 3px 0; font-size: 12px;
+}
+.hl-k { color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.hl-v { font-family: var(--mono); color: var(--text); text-align: right; white-space: nowrap; }
+.hl-note { grid-column: 1 / -1; color: var(--text-faint); font-size: 11px; line-height: 1.4; }
+.hl-stat.hl-good .hl-v { color: var(--green, #4caf7d); }
+.hl-stat.hl-ok .hl-v { color: var(--text); }
+.hl-stat.hl-warn .hl-v { color: var(--amber); }
+.hl-stat.hl-warn .hl-note { color: var(--amber); }
+
+.hl-counters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.hl-counter {
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  background: var(--bg-sunken); min-width: 0;
+}
+.hl-counter.warn { border-color: rgba(224, 163, 60, .4); }
+.hl-counter.warn .hl-cv { color: var(--amber); }
+.hl-cv { display: block; font-family: var(--mono); font-size: 13px; color: var(--text); }
+.hl-ck { display: block; font-size: 10.5px; color: var(--text-faint); }
+
+.hl-table { margin-top: 16px; }
+.hl-table table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+.hl-table th {
+  text-align: left; padding: 4px 8px; color: var(--text-dim); font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.hl-table td { padding: 3px 8px; border-bottom: 1px solid var(--border); font-family: var(--mono); }
+.hl-table td.n { text-align: right; white-space: nowrap; }

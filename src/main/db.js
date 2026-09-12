@@ -973,6 +973,12 @@ class Manager {
    * What the server is doing right now. Both engines have this; the driver
    * normalizes the columns so the panel does not care which one it is on.
    */
+  async serverStats(id) {
+    const conn = this.get(id);
+    const stats = await conn.driver.serverStats(conn.pool);
+    return { ...stats, engineLabel: conn.driver.label, database: stats.database || conn.currentDatabase };
+  }
+
   async processList(id) {
     const conn = this.get(id);
     return conn.driver.processList(conn.pool);

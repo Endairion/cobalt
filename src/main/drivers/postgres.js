@@ -423,6 +423,124 @@ const driver = {
     return r.rows[0];
   },
 
+  /**
+   * A health snapshot: how much the server is holding, how hard it is working,
+   * and the two things that quietly rot a Postgres database — dead tuples that
+   * never got vacuumed, and indexes nothing has ever read.
+   *
+   * Counters since the last stats reset are reported raw rather than as rates.
+   * A rate needs two samples and a clock, and a made-up per-second number is
+   * worse than an honest total with the uptime beside it.
+   */
+  async serverStats(pool) {
+    const overview = await pool.query(`
+      select current_database() as database,
+             pg_database_size(current_database())::bigint as db_bytes,
+             (select count(*) from pg_stat_activity where datname = current_database())::int as db_connections,
+             (select count(*) from pg_stat_activity)::int as all_connections,
+             current_setting('max_connections')::int as max_connections,
+             extract(epoch from (now() - pg_postmaster_start_time()))::bigint as uptime_seconds,
+             current_setting('shared_buffers') as shared_buffers,
+             current_setting('work_mem') as work_mem,
+             current_setting('effective_cache_size') as effective_cache_size,
+             current_setting('maintenance_work_mem') as maintenance_work_mem,
+             version() as banner`);
+
+    const activity = await pool.query(`
+      select coalesce(blks_hit, 0)::bigint as blks_hit,
+             coalesce(blks_read, 0)::bigint as blks_read,
+             coalesce(xact_commit, 0)::bigint as commits,
+             coalesce(xact_rollback, 0)::bigint as rollbacks,
+             coalesce(tup_returned, 0)::bigint as tup_returned,
+             coalesce(tup_inserted, 0)::bigint as tup_inserted,
+             coalesce(tup_updated, 0)::bigint as tup_updated,
+             coalesce(tup_deleted, 0)::bigint as tup_deleted,
+             coalesce(temp_files, 0)::bigint as temp_files,
+             coalesce(temp_bytes, 0)::bigint as temp_bytes,
+             coalesce(deadlocks, 0)::bigint as deadlocks,
+             stats_reset
+      from pg_stat_database where datname = current_database()`);
+
+    const biggest = await pool.query(`
+      select n.nspname as schema, c.relname as name,
+             pg_total_relation_size(c.oid)::bigint as bytes,
+             pg_relation_size(c.oid)::bigint as table_bytes,
+             (pg_total_relation_size(c.oid) - pg_relation_size(c.oid))::bigint as index_bytes
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where c.relkind in ('r', 'p', 'm')
+        and n.nspname not in ('pg_catalog', 'information_schema')
+      order by pg_total_relation_size(c.oid) desc
+      limit 8`);
+
+    const vacuum = await pool.query(`
+      select relname as name, schemaname as schema,
+             n_dead_tup::bigint as dead_tuples,
+             n_live_tup::bigint as live_tuples,
+             greatest(last_autovacuum, last_vacuum) as last_vacuum
+      from pg_stat_user_tables
+      where n_dead_tup > 0
+      order by n_dead_tup desc
+      limit 8`);
+
+    // An index nothing has read is disk and write cost for nothing — but a
+    // constraint's index has a job beyond being scanned, so it is left out.
+    const unused = await pool.query(`
+      select s.schemaname as schema, s.relname as table, s.indexrelname as name,
+             pg_relation_size(s.indexrelid)::bigint as bytes
+      from pg_stat_user_indexes s
+      join pg_index i on i.indexrelid = s.indexrelid
+      where s.idx_scan = 0 and not i.indisunique and not i.indisprimary
+      order by pg_relation_size(s.indexrelid) desc
+      limit 8`);
+
+    const o = overview.rows[0];
+    const a2 = activity.rows[0] || {};
+    const hit = Number(a2.blks_hit || 0);
+    const read = Number(a2.blks_read || 0);
+
+    return {
+      engine: 'postgres',
+      database: o.database,
+      uptimeSeconds: Number(o.uptime_seconds),
+      sizeBytes: Number(o.db_bytes),
+      connections: Number(o.db_connections),
+      connectionsAll: Number(o.all_connections),
+      maxConnections: Number(o.max_connections),
+      cacheHitRatio: hit + read > 0 ? hit / (hit + read) : null,
+      memory: [
+        { name: 'shared_buffers', value: o.shared_buffers, note: 'what the server caches pages in' },
+        { name: 'effective_cache_size', value: o.effective_cache_size, note: 'what the planner assumes the OS also caches' },
+        { name: 'work_mem', value: o.work_mem, note: 'per sort or hash, per operation' },
+        { name: 'maintenance_work_mem', value: o.maintenance_work_mem, note: 'vacuum and index builds' },
+      ],
+      counters: [
+        { name: 'commits', value: Number(a2.commits) },
+        { name: 'rollbacks', value: Number(a2.rollbacks) },
+        { name: 'rows returned', value: Number(a2.tup_returned) },
+        { name: 'rows inserted', value: Number(a2.tup_inserted) },
+        { name: 'rows updated', value: Number(a2.tup_updated) },
+        { name: 'rows deleted', value: Number(a2.tup_deleted) },
+        { name: 'temp files', value: Number(a2.temp_files), warn: Number(a2.temp_files) > 0,
+          note: 'a sort or hash that did not fit in work_mem spilled to disk' },
+        { name: 'deadlocks', value: Number(a2.deadlocks), warn: Number(a2.deadlocks) > 0 },
+      ],
+      since: a2.stats_reset || null,
+      biggest: biggest.rows.map((r) => ({
+        schema: r.schema, name: r.name,
+        bytes: Number(r.bytes), tableBytes: Number(r.table_bytes), indexBytes: Number(r.index_bytes),
+      })),
+      vacuum: vacuum.rows.map((r) => ({
+        schema: r.schema, name: r.name,
+        deadTuples: Number(r.dead_tuples), liveTuples: Number(r.live_tuples),
+        lastVacuum: r.last_vacuum,
+      })),
+      unusedIndexes: unused.rows.map((r) => ({
+        schema: r.schema, table: r.table, name: r.name, bytes: Number(r.bytes),
+      })),
+    };
+  },
+
   async processList(pool) {
     const r = await pool.query(`
       select pid::int as id,

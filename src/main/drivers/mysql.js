@@ -251,7 +251,7 @@ const driver = {
 
     const bases = [...new Set(columns
       .filter((c) => c.sourceTable)
-      .map((c) => `${c.sourceSchema} ${c.sourceTable}`))];
+      .map((c) => `${c.sourceSchema}\u0000${c.sourceTable}`))];
 
     if (!bases.length) return { columns, source: null, editable: false, reason: 'Result is not backed by a table.' };
 
@@ -278,7 +278,7 @@ const driver = {
       return { columns, source: null, editable: false, reason: 'Result joins more than one table.' };
     }
 
-    const [schema, table] = bases[0].split(' ');
+    const [schema, table] = bases[0].split('\u0000');
     const src = { schema, table };
 
     const info = await pool.query(
@@ -447,6 +447,131 @@ const driver = {
         : bytes < 1024 * 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(0)} MB`
           : `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
     return { total_size: pretty, index_count: Number(row.index_count ?? row.INDEX_COUNT ?? 0) };
+  },
+
+  /**
+   * The MySQL half of the health snapshot. The interesting number here is the
+   * InnoDB buffer pool: it is the one setting that decides whether a query is
+   * memory-speed or disk-speed, and the hit ratio next to it says whether the
+   * pool is big enough for the working set.
+   */
+  async serverStats(pool) {
+    const statusRows = await pool.query(`
+      show global status where Variable_name in (
+        'Uptime','Threads_connected','Threads_running','Questions','Slow_queries',
+        'Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads',
+        'Innodb_buffer_pool_pages_data','Innodb_buffer_pool_pages_total',
+        'Created_tmp_disk_tables','Created_tmp_tables','Aborted_connects',
+        'Com_commit','Com_rollback','Innodb_row_lock_waits')`);
+    const varRows = await pool.query(`
+      show global variables where Variable_name in (
+        'max_connections','innodb_buffer_pool_size','key_buffer_size',
+        'tmp_table_size','sort_buffer_size','join_buffer_size','version_comment')`);
+
+    const pick = (rows) => {
+      const out = new Map();
+      for (const r of rows) {
+        const name = r.Variable_name ?? r.VARIABLE_NAME;
+        const value = r.Value ?? r.VALUE;
+        if (name != null) out.set(String(name), value);
+      }
+      return out;
+    };
+    const st = pick(statusRows.rows);
+    const vr = pick(varRows.rows);
+    const num = (m, k) => Number(m.get(k) || 0);
+
+    const size = await pool.query(`
+      select coalesce(sum(data_length + index_length), 0) as bytes
+      from information_schema.tables where table_schema = database()`);
+
+    const biggest = await pool.query(`
+      select table_schema as \`schema\`, table_name as name,
+             coalesce(data_length + index_length, 0) as bytes,
+             coalesce(data_length, 0) as table_bytes,
+             coalesce(index_length, 0) as index_bytes
+      from information_schema.tables
+      where table_schema = database() and table_type = 'BASE TABLE'
+      order by (data_length + index_length) desc
+      limit 8`);
+
+    // MySQL keeps no per-index read counter unless performance_schema is on,
+    // so this asks it and simply reports nothing when it is not available.
+    let unused = [];
+    try {
+      const r = await pool.query(`
+        select object_schema as \`schema\`, object_name as \`table\`, index_name as name, 0 as bytes
+        from performance_schema.table_io_waits_summary_by_index_usage
+        where index_name is not null
+          and index_name <> 'PRIMARY'
+          and count_star = 0
+          and object_schema = database()
+        order by object_name, index_name
+        limit 8`);
+      unused = r.rows.map((row) => {
+        const g = (k) => row[k] ?? row[k.toUpperCase()];
+        return { schema: g('schema'), table: g('table'), name: g('name'), bytes: 0 };
+      });
+    } catch { unused = []; }
+
+    // Postgres reports its memory settings already formatted ("128MB"); MySQL
+    // hands back raw bytes, and a nine-digit number is not a readable setting.
+    const asSize = (v) => {
+      const b2 = Number(v);
+      if (!Number.isFinite(b2)) return v == null ? null : String(v);
+      if (b2 < 1024) return `${b2}B`;
+      if (b2 < 1024 * 1024) return `${Math.round(b2 / 1024)}kB`;
+      if (b2 < 1024 * 1024 * 1024) return `${Math.round(b2 / 1024 / 1024)}MB`;
+      return `${(b2 / 1024 / 1024 / 1024).toFixed(1)}GB`;
+    };
+
+    const reads = num(st, 'Innodb_buffer_pool_reads');
+    const requests = num(st, 'Innodb_buffer_pool_read_requests');
+    const pagesData = num(st, 'Innodb_buffer_pool_pages_data');
+    const pagesTotal = num(st, 'Innodb_buffer_pool_pages_total');
+    const tmpDisk = num(st, 'Created_tmp_disk_tables');
+
+    const sizeRow = size.rows[0] || {};
+    return {
+      engine: 'mysql',
+      database: null,
+      uptimeSeconds: num(st, 'Uptime'),
+      sizeBytes: Number(sizeRow.bytes ?? sizeRow.BYTES ?? 0),
+      connections: num(st, 'Threads_connected'),
+      connectionsAll: num(st, 'Threads_connected'),
+      maxConnections: num(vr, 'max_connections'),
+      cacheHitRatio: requests > 0 ? (requests - reads) / requests : null,
+      memory: [
+        { name: 'innodb_buffer_pool_size', value: asSize(vr.get('innodb_buffer_pool_size')),
+          note: 'the cache that decides memory speed or disk speed' },
+        { name: 'buffer pool in use', value: pagesTotal ? `${Math.round((pagesData / pagesTotal) * 100)}% of pages` : '—',
+          note: 'how much of that pool holds data' },
+        { name: 'sort_buffer_size', value: asSize(vr.get('sort_buffer_size')), note: 'per sort, per connection' },
+        { name: 'tmp_table_size', value: asSize(vr.get('tmp_table_size')), note: 'above this, a temp table goes to disk' },
+      ],
+      counters: [
+        { name: 'queries', value: num(st, 'Questions') },
+        { name: 'commits', value: num(st, 'Com_commit') },
+        { name: 'rollbacks', value: num(st, 'Com_rollback') },
+        { name: 'threads running', value: num(st, 'Threads_running') },
+        { name: 'slow queries', value: num(st, 'Slow_queries'), warn: num(st, 'Slow_queries') > 0 },
+        { name: 'temp tables on disk', value: tmpDisk, warn: tmpDisk > 0,
+          note: 'a temp table too big for tmp_table_size went to disk' },
+        { name: 'row lock waits', value: num(st, 'Innodb_row_lock_waits'), warn: num(st, 'Innodb_row_lock_waits') > 0 },
+        { name: 'aborted connects', value: num(st, 'Aborted_connects') },
+      ],
+      since: null,
+      biggest: biggest.rows.map((row) => {
+        const g = (k) => row[k] ?? row[k.toUpperCase()];
+        return {
+          schema: g('schema'), name: g('name'),
+          bytes: Number(g('bytes')), tableBytes: Number(g('table_bytes')), indexBytes: Number(g('index_bytes')),
+        };
+      }),
+      // InnoDB reclaims dead rows on its own; there is no vacuum to chase.
+      vacuum: [],
+      unusedIndexes: unused,
+    };
   },
 
   async processList(pool) {

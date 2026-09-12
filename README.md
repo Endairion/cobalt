@@ -41,7 +41,14 @@ inspector, export and import. MySQL has no schemas, so the connected database fi
 slot and the tree keeps its three levels. Everything engine-specific lives in
 `src/main/drivers`; adding another means adding a file there and nothing in the renderer.
 
-**Server activity.** `Ctrl+Shift+L` lists what the server is doing - who is connected,
+**Health and memory.** `Ctrl+Shift+M` puts the two halves of "why is this slow" side by
+side: database size, cache hit ratio, connections against the limit and the memory
+settings that decide memory speed or disk speed - and next to it what Cobalt costs, per
+process, plus how many rows this window is holding. Below that: the biggest tables split
+into data and indexes, dead rows waiting on vacuum, and indexes nothing has ever read.
+Counters are totals with the uptime beside them, not invented per-second rates.
+
+**Server activity. `Ctrl+Shift+L` lists what the server is doing - who is connected,
 what each is running, for how long. Cancel stops a statement, Kill closes the connection,
 both after confirming. Your own connection is marked and has no kill button.
 
@@ -183,6 +190,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+I` | Value inspector |
 | `Ctrl+Shift+X` | Export the result |
 | `Ctrl+Shift+L` | Server activity |
+| `Ctrl+Shift+M` | Health and memory |
 | `Ctrl+Shift+K` / `Ctrl+Alt+K` | Format statement / whole script |
 | `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
@@ -217,6 +225,7 @@ node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
 node test/where.test.js    # 18 checks: what an expression may contain, and may not
 node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
 node test/sqlformat.test.js # 45 checks: tokenizing, layout, and never changing meaning
+node test/health.test.js   # 17 checks: the health snapshot on both engines
 node test/csv.test.js      # 35 checks: CSV round trips, JSON/SQL/Markdown export
 node test/tunnel.test.js   # 19 checks: forwarding against a real in-process SSH server
 node test/sshdb.test.js    # 13 checks: Postgres through a tunnel - query, cancel, commit
@@ -243,6 +252,7 @@ node test/transferui.js   # every export format, and a CSV import that rolls bac
 node test/sshui.js        # the tunnel dialog, and the app connecting through a jump box
 node test/enginesui.js    # the engine picker, MySQL end to end, server activity
 node test/formatui.js     # formatting one statement, a script, and what it leaves alone
+node test/healthui.js     # the health panel on both engines, and what it counts
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -299,6 +309,7 @@ src/renderer/
   schemaops.js  schema action dialogs, with a live SQL preview
   transfer.js   the export dialog and the CSV import dialog
   processes.js  the server activity panel
+  health.js     server and app health, side by side
   filter.js     filter expression parser
 ```
 

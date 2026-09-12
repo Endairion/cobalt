@@ -277,6 +277,32 @@ handle('conn:ddl', (id, schema, table) => manager.tableDdl(id, schema, table));
 handle('conn:runDdl', (id, sql) => manager.ddl(id, sql));
 handle('conn:import', (id, spec) => manager.importRows(id, spec));
 handle('conn:processList', (id) => manager.processList(id));
+handle('conn:serverStats', (id) => manager.serverStats(id));
+
+/**
+ * What Cobalt itself is costing. Electron reports per-process CPU and memory,
+ * which is the honest way to answer "is it the app or the database?" — the
+ * renderer holding a large result set looks very different from a server that
+ * is swapping.
+ */
+handle('app:metrics', () => {
+  const metrics = app.getAppMetrics().map((m) => ({
+    pid: m.pid,
+    type: m.type,
+    name: m.name || null,
+    cpuPercent: m.cpu ? Number(m.cpu.percentCPUUsage.toFixed(1)) : null,
+    memoryBytes: m.memory ? (m.memory.workingSetSize || 0) * 1024 : null,
+  }));
+  const system = process.getSystemMemoryInfo ? process.getSystemMemoryInfo() : null;
+  return {
+    processes: metrics,
+    totalMemoryBytes: metrics.reduce((a, m) => a + (m.memoryBytes || 0), 0),
+    totalCpuPercent: Number(metrics.reduce((a, m) => a + (m.cpuPercent || 0), 0).toFixed(1)),
+    system: system ? { totalBytes: system.total * 1024, freeBytes: system.free * 1024 } : null,
+    uptimeSeconds: Math.round(process.uptime()),
+    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
+  };
+});
 handle('conn:killQuery', (id, pid, opts) => manager.killQuery(id, pid, opts));
 handle('app:engines', () => require('./drivers').list());
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));

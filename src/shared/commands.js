@@ -77,6 +77,7 @@ const MENU = [
       { id: 'palette:commands', label: 'Command Palette…', accel: 'CmdOrCtrl+Shift+P' },
       { id: 'history:open', label: 'Query History…', accel: 'CmdOrCtrl+H' },
       { id: 'server:processes', label: 'Server Activity…', accel: 'CmdOrCtrl+Shift+L' },
+      { id: 'server:health', label: 'Health & Memory…', accel: 'CmdOrCtrl+Shift+M' },
       { sep: true },
       { id: 'focus:editor', label: 'Focus Editor', accel: 'CmdOrCtrl+E' },
       { id: 'schema:refresh', label: 'Refresh Schema', accel: 'CmdOrCtrl+R' },

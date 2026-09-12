@@ -13,6 +13,20 @@
 
 const releases = [
   {
+    version: '0.19.0',
+    date: '2026-09-13',
+    title: 'Health and memory',
+    summary: 'What the server is holding, and what Cobalt itself costs, side by side.',
+    changes: [
+      { type: 'added', text: 'Ctrl+Shift+M shows the two halves of "why is this slow" together: database size, cache hit ratio, connections against the limit, the memory settings that decide whether a query runs in memory or off disk - and beside it what Cobalt is using, per process, plus how many rows this window is actually holding in its grids.' },
+      { type: 'added', text: 'The biggest tables, split into data and indexes. Dead rows waiting on vacuum, which is the usual answer to "it got slow and nothing changed". And indexes nothing has ever read, which cost on every write and give nothing back - constraint indexes are left out, since being scanned is not their job.' },
+      { type: 'added', text: 'Copy as text writes the whole snapshot out in a form you can paste into an issue.' },
+      { type: 'changed', text: 'Counters are shown as totals with the uptime beside them rather than as rates. A rate needs two samples and a clock, and a per-second number invented from one reading would read as precise while being made up.' },
+      { type: 'changed', text: 'Both engines report the same shape, so the panel has no idea which it is on: Postgres contributes shared_buffers and vacuum debt, MySQL the InnoDB buffer pool and its hit ratio, and MySQL simply reports no vacuum section because InnoDB reclaims its own dead rows.' },
+      { type: 'fixed', text: 'A size that could not be read showed as "0 B" rather than a dash, because Number(null) is zero. Unknown is not the same as empty.' },
+    ],
+  },
+  {
     version: '0.18.0',
     date: '2026-09-13',
     title: 'Tidy up the SQL',
