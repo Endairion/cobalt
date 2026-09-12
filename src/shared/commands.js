@@ -28,7 +28,9 @@ const MENU = [
       { id: 'file:save', label: 'Save SQL As…', accel: 'CmdOrCtrl+S' },
       { sep: true },
       { role: 'quit', label: 'Quit', mac: false },
-      { role: 'close', label: 'Close Window', mac: true },
+      // Cmd+W closes the tab here, as it does in a browser; the window gets
+      // the shifted one rather than fighting over it.
+      { role: 'close', label: 'Close Window', accel: 'CmdOrCtrl+Shift+W', mac: true },
     ],
   },
   {
@@ -63,7 +65,9 @@ const MENU = [
       { id: 'grid:inspect', label: 'Value Inspector', accel: 'CmdOrCtrl+I' },
       { sep: true },
       { id: 'grid:addRow', label: 'Add Row', accel: 'CmdOrCtrl+Shift+A' },
-      { id: 'grid:deleteRow', label: 'Delete Selected Rows', accel: 'CmdOrCtrl+Backspace' },
+      // Not Ctrl+Backspace: that is delete-word-backwards in any text box,
+      // and a grid shortcut is not worth breaking typing for.
+      { id: 'grid:deleteRow', label: 'Delete Selected Rows', accel: 'CmdOrCtrl+Shift+Backspace' },
       { id: 'grid:commit', label: 'Commit Grid Changes', accel: 'CmdOrCtrl+Shift+S' },
       { id: 'grid:discard', label: 'Discard Grid Changes' },
       { sep: true },
@@ -90,7 +94,8 @@ const MENU = [
   {
     label: 'View',
     items: [
-      { role: 'reload', label: 'Reload' },
+      // Electron's reload role defaults to Ctrl+R, which is Refresh Schema here.
+      { role: 'reload', label: 'Reload', accel: 'CmdOrCtrl+Alt+R' },
       { role: 'toggleDevTools', label: 'Toggle Developer Tools' },
       { sep: true },
       { role: 'resetZoom', label: 'Actual Size' },
@@ -154,4 +159,90 @@ function formatAccel(accel, platform) {
     .replace(/\+/g, '');
 }
 
-module.exports = { MENU, menuFor, commandIds, roleNames, formatAccel };
+
+
+/* ------------------------------------------------------------------ *
+ * Accelerators versus the editor's own keymap
+ *
+ * CodeMirror handles keys in the renderer and consumes the ones its commands
+ * take, which stops the menu accelerator ever firing. That is not a conflict
+ * you can see by reading either list: Ctrl+Shift+L worked until you had text
+ * selected, because only then did selectSelectionMatches claim it.
+ *
+ * So the editor is told which keys belong to the app, and drops its own
+ * bindings for them. The exceptions are keys where the editing behaviour is
+ * what anyone would expect in a text box — deleting a word backwards — and
+ * there it is the app's accelerator that has to move instead.
+ * ------------------------------------------------------------------ */
+
+/** Keys the editor keeps even though the menu also wants them. */
+const EDITOR_KEEPS = ['Mod-Backspace'];
+
+/**
+ * "CmdOrCtrl+Shift+K" and "Shift-Mod-k" both become "mod+shift|k", so the two
+ * spellings can be compared at all.
+ */
+function canonicalKey(key) {
+  const parts = String(key || '').split(/[+-]/).filter(Boolean);
+  if (!parts.length) return '';
+  const base = parts.pop().toLowerCase();
+  const mods = new Set();
+  for (const m of parts) {
+    const v = m.toLowerCase();
+    if (v === 'cmdorctrl' || v === 'commandorcontrol' || v === 'mod'
+      || v === 'cmd' || v === 'command' || v === 'ctrl' || v === 'control' || v === 'meta') mods.add('mod');
+    else if (v === 'shift') mods.add('shift');
+    else if (v === 'alt' || v === 'option') mods.add('alt');
+  }
+  const named = { return: 'enter', esc: 'escape', del: 'delete' };
+  return `${[...mods].sort().join('+')}|${named[base] || base}`;
+}
+
+/**
+ * The canonical keys the app's own commands claim — roles are left out, since
+ * Electron handles those and the editor should keep its normal behaviour for
+ * copy, paste and select-all.
+ */
+function appAcceleratorKeys() {
+  const keep = new Set(EDITOR_KEEPS.map(canonicalKey));
+  const out = new Set();
+  for (const g of MENU) {
+    for (const it of g.items) {
+      if (!it.id || !it.accel) continue;
+      const k = canonicalKey(it.accel);
+      if (!keep.has(k)) out.add(k);
+    }
+  }
+  return out;
+}
+
+/**
+ * Drop the bindings in a CodeMirror keymap that the app has claimed.
+ *
+ * A binding can claim two keys without spelling both: `{ key: "Mod-g", shift:
+ * findPrevious }` handles Ctrl+G *and* Ctrl+Shift+G. So the shift variant is
+ * checked separately, and when only that half collides the binding is kept
+ * with its `shift` handler removed — taking the whole thing would cost you
+ * Ctrl+G for the sake of Ctrl+Shift+G.
+ */
+function withoutAppKeys(bindings) {
+  const claimed = appAcceleratorKeys();
+  const out = [];
+  for (const b of bindings) {
+    const spellings = [b.key, b.win, b.linux].filter(Boolean);
+    if (spellings.some((k) => claimed.has(canonicalKey(k)))) continue;
+
+    if (b.shift && spellings.some((k) => claimed.has(canonicalKey(`Shift-${k}`)))) {
+      const { shift, ...rest } = b;
+      out.push(rest);
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+module.exports = {
+  MENU, menuFor, commandIds, roleNames, formatAccel,
+  canonicalKey, appAcceleratorKeys, withoutAppKeys, EDITOR_KEEPS,
+};

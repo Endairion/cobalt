@@ -115,5 +115,61 @@ test('the tree covers the features that have no other button', () => {
   }
 });
 
+/**
+ * Electron gives several roles a default accelerator whether you ask or not —
+ * reload is Ctrl+R, dev tools is Ctrl+Shift+I. A command that picks the same
+ * key loses silently, which is how Refresh Schema was dead for a long time.
+ */
+const ROLE_DEFAULTS = {
+  reload: 'CmdOrCtrl+R',
+  forceReload: 'CmdOrCtrl+Shift+R',
+  toggleDevTools: 'CmdOrCtrl+Shift+I',
+  resetZoom: 'CmdOrCtrl+0',
+  zoomIn: 'CmdOrCtrl+=',
+  zoomOut: 'CmdOrCtrl+-',
+  togglefullscreen: 'F11',
+  quit: 'CmdOrCtrl+Q',
+  close: 'CmdOrCtrl+W',
+  minimize: 'CmdOrCtrl+M',
+};
+
+test('no command collides with a role default accelerator', () => {
+  const { canonicalKey } = require('../src/shared/commands');
+  // Per platform: an item marked mac-only is not on Windows to collide with.
+  for (const platform of ['win32', 'darwin']) {
+  const taken = new Map();
+  for (const group of menuFor(platform)) {
+    for (const item of group.items) {
+      const accel = item.accel || (item.role ? ROLE_DEFAULTS[item.role] : null);
+      if (!accel) continue;
+      const key = canonicalKey(accel);
+      const who = item.id || `role:${item.role}`;
+      if (taken.has(key)) {
+        throw new Error(`on ${platform}, ${accel} is claimed by both ${taken.get(key)} and ${who}`);
+      }
+      taken.set(key, who);
+    }
+  }
+  }
+});
+
+test('the editor gives up the keys the app has claimed', () => {
+  const { withoutAppKeys, appAcceleratorKeys, canonicalKey } = require('../src/shared/commands');
+  const claimed = appAcceleratorKeys();
+
+  // A binding whose whole key is ours goes.
+  assert.strictEqual(withoutAppKeys([{ key: 'Shift-Mod-k' }]).length, 0);
+  // One that only collides on its shift half keeps the binding, loses the half.
+  const kept = withoutAppKeys([{ key: 'Mod-g', run: 1, shift: 2 }]);
+  assert.strictEqual(kept.length, 1);
+  assert.strictEqual(kept[0].shift, undefined, 'Ctrl+Shift+G belongs to Find in Database');
+  assert.strictEqual(kept[0].run, 1, 'but Ctrl+G is still the editor\'s find-next');
+  // Text editing the app never claimed is untouched.
+  assert.strictEqual(withoutAppKeys([{ key: 'Mod-a' }, { key: 'Mod-f' }]).length, 2);
+  // Delete-word-backwards is deliberately left with the editor.
+  assert.ok(!claimed.has(canonicalKey('Mod-Backspace')),
+    'Ctrl+Backspace must stay word-delete; the grid shortcut moved instead');
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

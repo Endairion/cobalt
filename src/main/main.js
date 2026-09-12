@@ -122,6 +122,14 @@ async function runSmoke(w) {
     try {
       if (!await untilReady(25000)) throw new Error('renderer never reported ready');
       for (const c of cmds) { send(c); await wait(1200); }
+      // Something to run before the keys — putting the caret in the editor, say,
+      // since where focus is decides who sees a keystroke first.
+      const prepArg = process.argv.find((a) => a.startsWith('--smoke-prep='));
+      if (prepArg) {
+        await w.webContents.executeJavaScript(prepArg.slice('--smoke-prep='.length));
+        await wait(300);
+      }
+
       // Optional real key presses, to prove accelerators reach the app.
       const keysArg = process.argv.find((a) => a.startsWith('--smoke-keys='));
       if (keysArg) {

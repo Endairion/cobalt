@@ -178,6 +178,14 @@ versions behind it and the server you are on. The first launch of a build you ha
 seen opens What's New once, listing only the releases after the version you were on.
 Releases are tagged in git (`v0.1.0` …).
 
+**Shortcuts.** The editor is told which keys the menu has claimed and drops its own
+bindings for them - CodeMirror handles keys in the renderer and consumes the ones its
+commands take, so a menu accelerator it also binds never fires. That is not visible by
+reading either list: `Ctrl+Shift+L` worked until you had text selected, because only then
+did "select all occurrences" claim it. Keys that mean something in any text box, like
+`Ctrl+Backspace`, stay with the editor and the app's shortcut moves instead. Every
+accelerator is pressed for real in `test/accelui.js`.
+
 **The menu.** The window is frameless, so there is no OS menu bar — the button at the
 left of the tab strip opens the same menu, with shortcuts shown beside each item.
 Explain, Benchmark and History also have toolbar buttons. It is all defined once in
@@ -214,7 +222,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
 | `Ctrl+Shift+S` | Commit grid changes |
 | `Ctrl+Shift+A` | Add row |
-| `Ctrl+Backspace` | Toggle row delete |
+| `Ctrl+Shift+Backspace` | Toggle row delete |
 
 In the grid: arrows/Tab move, `Enter` or typing edits, `Esc` cancels, `Ctrl+0` sets
 NULL, `Ctrl+C` copies the cell. Click a header to sort the loaded page, drag its right
@@ -275,6 +283,7 @@ node test/formatui.js     # formatting one statement, a script, and what it leav
 node test/healthui.js     # the health panel on both engines, and what it counts
 node test/searchui.js     # searching, what it reports, and opening a hit
 node test/objectsui.js    # indexes, keys, triggers, functions and sequences in the tree
+node test/accelui.js      # every shortcut pressed for real, with text selected
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 

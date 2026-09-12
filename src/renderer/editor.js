@@ -14,6 +14,7 @@ import {
   syntaxHighlighting, HighlightStyle,
 } from '@codemirror/language';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
+import { withoutAppKeys } from '../shared/commands.js';
 import { tags as t } from '@lezer/highlight';
 import { splitStatements } from '../main/sqlsplit.js';
 
@@ -110,9 +111,17 @@ export class SqlEditor {
           syntaxHighlighting(highlight),
           activeStatement,
           runKeys,
+          // Without the filter, CodeMirror silently eats the app's shortcuts:
+          // it handles keys in the renderer and consumes the ones its own
+          // commands take, so the menu accelerator never fires. Ctrl+Shift+L
+          // worked until you had text selected, at which point
+          // selectSelectionMatches claimed it.
           keymap.of([
-            ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap,
-            ...historyKeymap, ...foldKeymap, ...completionKeymap, indentWithTab,
+            ...withoutAppKeys([
+              ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap,
+              ...historyKeymap, ...foldKeymap, ...completionKeymap,
+            ]),
+            indentWithTab,
           ]),
           this.schemaCompartment.of(sql(this.sqlConfig)),
           theme,
@@ -182,6 +191,15 @@ export class SqlEditor {
       changes: { from: 0, to: this.view.state.doc.length, insert: text },
       selection: { anchor: Math.min(selectionPos ?? text.length, text.length) },
     });
+  }
+
+  /** Select a range, for tests. */
+  select(from, to) {
+    const len = this.view.state.doc.length;
+    this.view.dispatch({
+      selection: { anchor: Math.min(from, len), head: Math.min(to, len) },
+    });
+    this.focus();
   }
 
   /** Put the caret at an offset, for tests and for jumping to an error. */

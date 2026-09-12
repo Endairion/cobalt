@@ -3,6 +3,23 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.21.1 — Shortcuts that actually fire
+*2026-09-13*
+
+The editor was quietly eating six of them.
+
+### Added
+- Every accelerator is now pressed for real in a test, with text selected in the editor - the case that was broken. The handlers were always covered by calling them directly, which goes around the keystroke entirely and so proved nothing about whether the key arrives.
+- A check that no command collides with an accelerator Electron gives a role by default, which is what had quietly claimed Ctrl+R. It found a second one immediately: Cmd+W was claimed twice on macOS.
+
+### Changed
+- Ctrl+Backspace stays delete-word-backwards, because that is what it does in any text box. Delete Selected Rows moved to Ctrl+Shift+Backspace instead - an app shortcut is not worth breaking typing for.
+- Reload moved to Ctrl+Alt+R so Refresh Schema can have Ctrl+R, and on macOS Close Window moved to Cmd+Shift+W so Cmd+W closes the tab, as it does in a browser.
+
+### Fixed
+- Ctrl+Shift+L opened Server Activity only while nothing was selected. CodeMirror binds the same key to "select all occurrences of the selection", and a key its own command handles never reaches the menu - so the shortcut worked right up until you had text selected, which is exactly when you would reach for it.
+- The same shadowing killed five more outright. Ctrl+Shift+K deleted the line instead of formatting it, Ctrl+Shift+G did nothing, Ctrl+I did nothing, and Ctrl+R was taken by Electron reload rather than refreshing the schema. The editor is now told which keys belong to the app and gives them up.
+
 ## 0.21.0 — The rest of the schema
 *2026-09-13*
 

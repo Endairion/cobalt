@@ -2773,6 +2773,7 @@ window.__cobaltGridRows = () => {
 window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
 window.__cobaltSetCaret = (pos) => editor.setCaret(pos);
+window.__cobaltSelect = (from, to) => editor.select(from, to);
 window.__cobaltMenu = (cmd) => menuCommand(cmd);
 window.__cobaltInspector = () => inspector.debugState();
 // Drives the import dialog without an OS file picker, which a test cannot answer.
