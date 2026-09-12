@@ -29,7 +29,7 @@ const NULL_TOKEN = Symbol('null');
 const UNSET = Symbol('unset');   // no staged value for this cell
 
 export class ResultGrid {
-  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, onCellMenu, readOnly = false } = {}) {
+  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, onCellMenu, onCursor, readOnly = false } = {}) {
     this.host = host;
     this.onDirtyChange = onDirtyChange || (() => {});
     this.onStatus = onStatus || (() => {});
@@ -37,6 +37,7 @@ export class ResultGrid {
     this.onSort = onSort || (() => {});
     this.onNeedMore = onNeedMore || (() => {});
     this.onCellMenu = onCellMenu || (() => {});
+    this.onCursor = onCursor || (() => {});
     this.loadingMore = false;
     this.readOnly = readOnly;
     this.hiddenCols = new Set();   // column indexes the viewer chose to hide
@@ -408,6 +409,9 @@ export class ResultGrid {
   }
 
   emitCellStatus() {
+    // Anything that moves the cursor or changes the value under it comes
+    // through here, which makes it the one place the inspector has to hear.
+    this.onCursor();
     if (!this.columns.length || !this.totalRows()) return;
     const v = this.valueAt(this.cursor.row, this.cursor.col);
     const col = this.columns[this.cursor.col];
@@ -620,6 +624,18 @@ export class ResultGrid {
     this.renderRows();
     this.onDirtyChange(this.dirtyCount());
     this.emitCellStatus();
+  }
+
+  /**
+   * Stage a value from outside the grid — the inspector's editor. `null` means
+   * SQL NULL. Goes through setValue, so it lands on the same pending set, the
+   * same undo stack and the same "nothing is written yet" bar.
+   */
+  stageValue(display, col, value) {
+    if (!this.editable) { this.onStatus('This result is read-only.'); return false; }
+    if (this.at(display).kind === 'none') return false;
+    this.setValue(display, col, value === null ? NULL_TOKEN : String(value));
+    return true;
   }
 
   clearEdit(display, col) {

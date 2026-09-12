@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.13.0',
+    date: '2026-09-12',
+    title: 'The value inspector',
+    summary: 'Read a value that does not fit in a cell, and edit it in a box big enough to type in.',
+    changes: [
+      { type: 'added', text: 'A panel beside the grid shows the cell under the cursor in full - Ctrl+I, or the Value button on the result toolbar. JSON is pretty-printed, bytea is a hex dump with the printable bytes beside it, long text wraps, and NULL is labelled rather than left blank. It follows the cursor as you move.' },
+      { type: 'added', text: 'A Row view lists every column of the current row down the page, so a wide table can be read without scrolling sideways. Clicking a field takes the cursor to that column, bringing it back if you had hidden it.' },
+      { type: 'added', text: 'Editing from the panel stages the change exactly as typing in a cell does: the row goes amber, the pending bar appears, Ctrl+Z takes it back, and nothing reaches the database until Commit. Ctrl+Enter saves, Esc cancels, and there is a Set NULL button. A read-only result offers no editor at all.' },
+      { type: 'changed', text: 'JSON is re-indented by walking the text rather than through JSON.parse, which would round a 20-digit key and drop the trailing zero from a numeric on the way through. The Raw button shows the text exactly as stored. Anything that is not JSON - prose, a Postgres array - is left alone rather than reformatted.' },
+    ],
+  },
+  {
     version: '0.12.2',
     date: '2026-09-12',
     title: 'Menu items respond to the mouse',

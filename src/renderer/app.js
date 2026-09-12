@@ -8,6 +8,7 @@ import * as history from './history.js';
 import { showMenu } from './menu.js';
 import { validateWhere, andWith } from '../shared/whereclause.js';
 import * as appmenu from './appmenu.js';
+import * as inspector from './inspector.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -27,6 +28,8 @@ const el = {
   resultTabs: $('result-tabs'),
   gridToolbar: $('grid-toolbar'),
   gridHost: $('grid-host'),
+  inspector: $('inspector'),
+  inspResizer: $('insp-resizer'),
   statusLeft: $('status-left'),
   statusRight: $('status-right'),
   overlay: $('overlay'),
@@ -926,6 +929,64 @@ async function openCellMenu(tab, rowIdx, colIdx, at) {
   showMenu(items, at);
 }
 
+/* ---------------------------- inspector ---------------------------- */
+
+inspector.wire({ panel: el.inspector, resizer: el.inspResizer }, {
+  onStage: (rowIdx, colIdx, value) => {
+    const g = activeTab() && activeTab().grid;
+    if (!g) return;
+    if (g.stageValue(rowIdx, colIdx, value)) toast('Staged — commit to write it.');
+  },
+  onPick: (colIdx) => {
+    const g = activeTab() && activeTab().grid;
+    if (!g) return;
+    // Picking a field you had hidden brings the column back rather than
+    // silently landing the cursor on a different one.
+    if (g.hiddenCols.has(colIdx)) {
+      const next = new Set(g.hiddenCols);
+      next.delete(colIdx);
+      g.setHidden([...next]);
+      renderGridToolbar();
+    }
+    g.setCursor(g.cursor.row, colIdx, { scroll: true });
+  },
+  onChange: () => { renderGridToolbar(); renderInspector(); },
+  copy: (text) => api.ui.copy(text),
+  toast: (m) => toast(m),
+});
+
+/** What the panel needs about the cell under the cursor, and the row it is in. */
+function inspectorPayload() {
+  const tab = activeTab();
+  const g = tab && tab.grid;
+  const res = tab && tab.results[tab.activeResult];
+  if (!g || !res || res.error || !g.columns.length || !g.totalRows()) return { hasResult: false };
+  const { row, col } = g.cursor;
+  return {
+    hasResult: true,
+    columns: g.columns,
+    rowIdx: row,
+    colIdx: col,
+    value: g.valueAt(row, col),
+    editable: !!g.editable && !g.readOnly,
+    rowLabel: `Row ${row + 1} of ${fmtNum(g.totalRows())}`,
+    fields: g.columns.map((c, i) => ({
+      name: c.name,
+      type: c.dataType,
+      value: g.valueAt(row, i),
+      edited: g.isEdited(row, i),
+      hidden: g.hiddenCols.has(i),
+    })),
+  };
+}
+
+function renderInspector() {
+  if (!inspector.isOpen()) return;
+  inspector.render(inspectorPayload());
+}
+
+function toggleInspector() { inspector.toggle(); }
+
 /* ----------------------------- history ----------------------------- */
 
 history.wire({
@@ -1387,6 +1448,7 @@ function renderResults() {
       onSort: (sort) => applySort(tab, sort),
       onNeedMore: () => loadPage(tab, { append: true }),
       onCellMenu: (row, col, at) => openCellMenu(tab, row, col, at),
+      onCursor: () => renderInspector(),
       readOnly: !!(state.conns.get(tab.connId) || {}).readOnly,
     });
   }
@@ -1396,6 +1458,7 @@ function renderResults() {
     markForeignKeys(tab);
   }
   renderGridToolbar();
+  renderInspector();
 }
 
 function renderGridToolbar() {
@@ -1435,7 +1498,8 @@ function renderGridToolbar() {
   const filterBtn =
     `<button class="btn small ${el.filterBar.hidden ? 'ghost' : 'primary'}" data-act="filter" title="Filter these rows (Ctrl+Shift+F)">Filter</button>` +
     (whereText ? '<button class="btn small ghost" data-act="clearFilters">Clear</button>' : '') +
-    '<button class="btn small ghost" data-act="columns" title="Choose which columns to show">Columns</button>';
+    '<button class="btn small ghost" data-act="columns" title="Choose which columns to show">Columns</button>' +
+    `<button class="btn small ${inspector.isOpen() ? 'primary' : 'ghost'}" data-act="inspect" title="Show the value under the cursor in full (Ctrl+I)">Value</button>`;
 
   const actions = canEdit
     ? `<span class="spacer"></span>
@@ -1500,6 +1564,7 @@ function handleGridAction(actEl) {
     case 'commit': commitGrid(); break;
     case 'discard': tab.grid.discard(); renderGridToolbar(); break;
     case 'csv': exportCsv(); break;
+    case 'inspect': toggleInspector(); break;
     case 'count': countRows(tab); break;
     case 'filter': showFilterBar(); renderGridToolbar(); break;
     case 'clearFilters': el.fbInput.value = ''; applyWhere(''); break;
@@ -2207,6 +2272,7 @@ function menuCommand(cmd) {
     case 'grid:columns':
       if (tab && tab.grid) openColumnChooser(el.gridToolbar.querySelector('[data-act="columns"]') || el.gridToolbar);
       break;
+    case 'grid:inspect': toggleInspector(); break;
     case 'result:csv': exportCsv(); break;
     case 'history:open': history.openHistory(); break;
     case 'palette:tables': openTablePalette(); break;
@@ -2269,6 +2335,7 @@ window.__cobaltGridRows = () => {
 window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
 window.__cobaltMenu = (cmd) => menuCommand(cmd);
+window.__cobaltInspector = () => inspector.debugState();
 window.__cobaltCursor = () => {
   const t = activeTab();
   return t && t.grid ? { ...t.grid.cursor } : { row: -1, col: -1 };

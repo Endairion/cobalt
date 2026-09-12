@@ -57,6 +57,7 @@ const MENU = [
       { id: 'grid:filter', label: 'Filter Rows…', accel: 'CmdOrCtrl+Shift+F' },
       { id: 'grid:clearFilters', label: 'Clear Filter' },
       { id: 'grid:columns', label: 'Choose Columns…' },
+      { id: 'grid:inspect', label: 'Value Inspector', accel: 'CmdOrCtrl+I' },
       { sep: true },
       { id: 'grid:addRow', label: 'Add Row', accel: 'CmdOrCtrl+Shift+A' },
       { id: 'grid:deleteRow', label: 'Delete Selected Rows', accel: 'CmdOrCtrl+Backspace' },

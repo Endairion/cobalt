@@ -34,6 +34,30 @@ create table shop.audit_log (
   action   text
 );
 
+-- Values the grid cannot show in one line: binary, a big document, long prose.
+-- The bigint and the trailing zero in `payload` are there to catch a formatter
+-- that round-trips JSON through parse/stringify.
+create table shop.docs (
+  id       bigint generated always as identity primary key,
+  label    text not null,
+  payload  jsonb,
+  blob     bytea,
+  body     text
+);
+
+insert into shop.docs (label, payload, blob, body) values
+  ('precision',
+   '{"account":12345678901234567890,"amount":1.10,"ok":true,"tags":["a","b"],"empty":{}}'::jsonb,
+   decode('48656c6c6f2c20776f726c6421000102', 'hex'),
+   repeat('The quick brown fox jumps over the lazy dog. ', 60)),
+  ('nested',
+   '{"a":{"b":{"c":[1,2,3]}},"note":"has, commas {and} braces"}'::jsonb,
+   decode('deadbeef', 'hex'),
+   E'line one
+line two
+line three'),
+  ('empty bits', null, null, '');
+
 insert into shop.customers (email, full_name, balance, prefs, notes)
 select
   'user' || g || '@example.com',

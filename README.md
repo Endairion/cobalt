@@ -79,6 +79,19 @@ parentheses — the ways it could end the statement and start another — and a 
 the SQL itself comes back from the server and is shown beside the box. Right-click a
 cell for "Filter by this value", which writes the condition into the bar for you.
 
+**Value inspector.** `Ctrl+I` opens a panel beside the grid showing the cell under
+the cursor at a size you can read: JSON pretty-printed, `bytea` as a hex dump with the
+printable bytes beside it, long text wrapped, `NULL` labelled rather than blank. The
+Row view lists every column of the current row down the page, so a wide table needs no
+sideways scrolling; clicking a field takes the cursor there. Editing in the panel stages
+the change the same way typing in a cell does - amber row, pending bar, `Ctrl+Z` to take
+it back, nothing written until Commit.
+
+The JSON is re-indented by walking the text, never through `JSON.parse`: that would
+round a 20-digit key and drop the trailing zero from a `numeric` on the way through, and
+the point of this panel is to show you what is actually in the row. `Raw` shows the
+stored text unchanged.
+
 **Columns.** The Columns button chooses what to show. Hidden columns leave the grid, the
 CSV export and the clipboard, and arrow keys skip them.
 
@@ -118,6 +131,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+R` | Refresh schema |
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
 | `Ctrl+Shift+F` | Toggle the filter row |
+| `Ctrl+I` | Value inspector |
 | `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
 | `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
@@ -145,6 +159,7 @@ node test/fk.test.js       # 8 checks: both directions, composite and duplicate 
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
 node test/where.test.js    # 18 checks: what an expression may contain, and may not
+node test/value.test.js    # 33 checks: JSON that survives pretty-printing, hex dumps
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
 node test/manager.js      # multi-connection sidebar, manager dialog, tab rebinding
@@ -160,6 +175,7 @@ node test/browseui.js     # click-to-browse, tab reuse, open as query
 node test/safetyui.js     # staged-change bar, undo, filtering writes nothing
 node test/filterbarui.js  # the expression bar, column chooser, filter-by-value
 node test/reconnectui.js  # startup reopens what was connected
+node test/inspectorui.js  # the value panel: JSON, binary, the row view, staging an edit
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -188,6 +204,7 @@ src/shared/
   commands.js   the menu tree, shared by the native menu and the in-app one
   stats.js      quantiles and the benchmark verdict rule
   whereclause.js  validation for a hand-written filter expression
+  valueview.js  classifying and formatting one cell value
   sqlkind.js    whether a statement only reads
 src/main/
   main.js       window, menu, IPC surface, smoke mode
@@ -205,6 +222,7 @@ src/renderer/
   appmenu.js    the in-app menu bar
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
+  inspector.js  the value panel beside the grid
   filter.js     filter expression parser
 ```
 
