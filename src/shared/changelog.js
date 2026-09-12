@@ -13,6 +13,16 @@
 
 const releases = [
   {
+    version: '0.10.1',
+    date: '2026-09-12',
+    title: 'Stored passwords',
+    summary: 'Plaintext entries get encrypted, and an unreadable one says so.',
+    changes: [
+      { type: 'added', text: 'Any password sitting in plain text is re-encrypted through the OS keychain the next time the app starts. That is the documented fallback for machines without safeStorage, and it is also what a connection imported by hand looks like; either way there is no reason to leave it readable once encryption is available.' },
+      { type: 'fixed', text: 'A stored password that cannot be decrypted now says so. safeStorage keys off the profile Local State file, so a connections file copied or restored without it decrypts to nothing, and the driver was reporting the opaque "client password must be a string" instead.' },
+    ],
+  },
+  {
     version: '0.10.0',
     date: '2026-09-12',
     title: 'The menu comes back',

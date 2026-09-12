@@ -21,7 +21,12 @@ it or press `Ctrl+K` to move that tab to a different connection. Tabs remember t
 connection across restarts and reattach when it opens. Connection colours run down the
 tab strip so a production tab is obvious.
 
-Saved in `userData/cobalt-connections.json`. Passwords are encrypted
+Saved in `userData/cobalt-connections.json`. Passwords are encrypted through
+`safeStorage`, which keys off the profile's own `Local State` file — so if you back up or
+move the app data folder, take `Local State` with it or the stored passwords will not
+decrypt. The app says so plainly when that happens and asks for the password again. A
+password written in plain text (an imported entry, or one saved where safeStorage was
+unavailable) is encrypted on the next launch. Passwords are encrypted
 with the OS keychain (DPAPI on Windows, Keychain on macOS) via Electron's `safeStorage`
 and never travel to the renderer — it only ever sees a `hasPassword` flag. Mark a
 connection read-only to disable grid editing against production — that flag is

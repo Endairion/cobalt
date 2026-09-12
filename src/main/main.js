@@ -257,6 +257,13 @@ handle('conn:test', async (record) => {
 handle('conn:open', async (savedId, overrides) => {
   const saved = store.resolve(savedId);
   if (!saved) throw new Error('Saved connection not found.');
+  if (saved.passwordUnavailable && !(overrides && overrides.password)) {
+    throw new Error(
+      `The stored password for "${saved.name}" could not be decrypted. ` +
+      'That happens when the app data folder is copied or restored without its Local State file, ' +
+      'which holds the encryption key. Enter the password again to store a fresh one.'
+    );
+  }
   const cfg = { ...saved, ...(overrides || {}) };
   if (!cfg.password && overrides && overrides.password) cfg.password = overrides.password;
   const info = await manager.open(cfg);

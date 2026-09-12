@@ -75,6 +75,71 @@ test('uses safeStorage when it is available', () => {
   encryptionAvailable = false;
 });
 
+test('a plaintext password is upgraded to the keychain on load', () => {
+  // What an entry imported by hand looks like, or one written on a machine
+  // where safeStorage was unavailable.
+  encryptionAvailable = false;
+  const s = fresh();
+  const rec = s.upsert({ name: 'Imported', password: 'from-outside' });
+  const onDisk = () => JSON.parse(fs.readFileSync(path.join(dir, 'conns.json'), 'utf8'));
+  assert.strictEqual(onDisk().connections[0].password.plain, 'from-outside', 'stored in the clear first');
+
+  encryptionAvailable = true;
+  const reopened = new Store('conns.json');
+  const after = onDisk().connections[0].password;
+  assert.ok(after.enc, 'upgraded to the encrypted form');
+  assert.strictEqual(after.plain, undefined, 'and the plaintext is gone');
+  assert.strictEqual(reopened.resolve(rec.id).password, 'from-outside', 'still readable');
+  encryptionAvailable = false;
+});
+
+test('migration leaves already-encrypted entries alone', () => {
+  encryptionAvailable = true;
+  const s = fresh();
+  s.upsert({ name: 'A', password: 'secret' });
+  const before = JSON.parse(fs.readFileSync(path.join(dir, 'conns.json'), 'utf8')).connections[0].password.enc;
+  const reopened = new Store('conns.json');
+  const after = JSON.parse(fs.readFileSync(path.join(dir, 'conns.json'), 'utf8')).connections[0].password.enc;
+  assert.strictEqual(after, before, 'not re-encrypted needlessly');
+  assert.strictEqual(reopened.list().length, 1);
+  encryptionAvailable = false;
+});
+
+test('migration is a no-op when encryption is unavailable', () => {
+  encryptionAvailable = false;
+  const s = fresh();
+  s.upsert({ name: 'A', password: 'secret' });
+  assert.strictEqual(new Store('conns.json').migratePasswords(), 0);
+  assert.strictEqual(
+    JSON.parse(fs.readFileSync(path.join(dir, 'conns.json'), 'utf8')).connections[0].password.plain,
+    'secret', 'left as-is rather than lost');
+});
+
+test('an undecryptable password is reported, not silently empty', () => {
+  encryptionAvailable = true;
+  const s = fresh();
+  const rec = s.upsert({ name: 'Moved', password: 'secret' });
+  assert.strictEqual(s.resolve(rec.id).passwordUnavailable, false, 'fine while the key works');
+
+  // What a profile copied without its Local State file looks like.
+  const original = stub.safeStorage.decryptString;
+  stub.safeStorage.decryptString = () => { throw new Error('key mismatch'); };
+  const moved = new Store('conns.json').resolve(rec.id);
+  assert.strictEqual(moved.passwordUnavailable, true, 'flagged rather than blank');
+  assert.strictEqual(moved.password, '');
+  assert.strictEqual(moved.name, 'Moved', 'the rest of the record still resolves');
+  stub.safeStorage.decryptString = original;
+  encryptionAvailable = false;
+});
+
+test('a connection with no password is not flagged', () => {
+  const s = fresh();
+  const rec = s.upsert({ name: 'Trust', user: 'postgres' });
+  const r = s.resolve(rec.id);
+  assert.strictEqual(r.passwordUnavailable, false);
+  assert.strictEqual(r.password, '');
+});
+
 test('list comes back in explicit order', () => {
   const s = fresh();
   const a = s.upsert({ name: 'Zebra' });

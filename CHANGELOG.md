@@ -3,6 +3,17 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.10.1 — Stored passwords
+*2026-09-12*
+
+Plaintext entries get encrypted, and an unreadable one says so.
+
+### Added
+- Any password sitting in plain text is re-encrypted through the OS keychain the next time the app starts. That is the documented fallback for machines without safeStorage, and it is also what a connection imported by hand looks like; either way there is no reason to leave it readable once encryption is available.
+
+### Fixed
+- A stored password that cannot be decrypted now says so. safeStorage keys off the profile Local State file, so a connections file copied or restored without it decrypts to nothing, and the driver was reporting the opaque "client password must be a string" instead.
+
 ## 0.10.0 — The menu comes back
 *2026-09-12*
 

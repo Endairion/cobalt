@@ -14,6 +14,28 @@ class Store {
     this.file = path.join(app.getPath('userData'), filename);
     this.data = { connections: [], workspace: null, seenVersion: null };
     this.load();
+    this.migratePasswords();
+  }
+
+  /**
+   * Upgrade any password sitting in plain text to the OS keychain.
+   *
+   * The plaintext form is the documented fallback for machines where
+   * safeStorage is unavailable, and it is also what an entry imported by hand
+   * looks like. Either way, once encryption is available there is no reason to
+   * leave it readable on disk.
+   */
+  migratePasswords() {
+    if (!safeStorage.isEncryptionAvailable()) return 0;
+    let upgraded = 0;
+    for (const c of this.data.connections) {
+      if (c.password && c.password.plain) {
+        c.password = this.encrypt(c.password.plain);
+        upgraded++;
+      }
+    }
+    if (upgraded) this.save();
+    return upgraded;
   }
 
   load() {
@@ -65,12 +87,31 @@ class Store {
     return this.data.connections.find((c) => c.id === id) || null;
   }
 
-  /** Full config including the decrypted password — main process only. */
+  /**
+   * Full config including the decrypted password — main process only.
+   *
+   * `passwordUnavailable` means a password is stored but this profile cannot
+   * read it. safeStorage keys off the profile's own Local State file, so a
+   * connections file copied or restored without it decrypts to nothing, and
+   * saying so beats letting the driver complain that the password is not a
+   * string.
+   */
   resolve(id) {
     const c = this.find(id);
     if (!c) return null;
     const { password, ...rest } = c;
-    return { ...rest, password: this.decrypt(password) };
+    if (password && password.enc) {
+      try {
+        return {
+          ...rest,
+          password: safeStorage.decryptString(Buffer.from(password.enc, 'base64')),
+          passwordUnavailable: false,
+        };
+      } catch {
+        return { ...rest, password: '', passwordUnavailable: true };
+      }
+    }
+    return { ...rest, password: this.decrypt(password), passwordUnavailable: false };
   }
 
   upsert(record) {
