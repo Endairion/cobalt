@@ -46,8 +46,10 @@ export function showMenu(items, anchor, opts = {}) {
   };
   const closeAll = () => { if (opts.parent) document.querySelectorAll('.ctx-menu').forEach((n) => n.remove()); else close(); };
   const onDown = (e) => {
-    if (menu.contains(e.target)) return;
-    if (opts.parent && opts.parent.contains(e.target)) return;   // the parent handles it
+    // A press anywhere in the open chain belongs to that menu, not to dismissal.
+    // Checking only this element closed the parent — and with it the submenu —
+    // the instant you pressed a submenu item, so the click never arrived.
+    if (e.target && e.target.closest && e.target.closest('.ctx-menu')) return;
     close();
   };
   const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };

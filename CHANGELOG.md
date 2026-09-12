@@ -3,6 +3,17 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.12.2 — Menu items respond to the mouse
+*2026-09-12*
+
+Pressing a submenu item closed the menu before the click landed.
+
+### Changed
+- The menu test presses the way a mouse does, sending mousedown first and only delivering a click if the item survived it. Dispatching a bare click event, which is what it did before, reaches a detached element quite happily and so reported the menu as working.
+
+### Fixed
+- Choosing anything from a submenu did nothing. A submenu is its own element rather than a child of the menu that opened it, so the parent treated a press inside it as a press outside itself and dismissed the whole chain on mousedown - leaving nothing for the click to land on. A press anywhere in the open chain now belongs to that menu.
+
 ## 0.12.1 — Start connected
 *2026-09-12*
 

@@ -74,6 +74,20 @@ const expect = (cond, label) => {
 const HELP = `
   const w = (ms) => new Promise(r => setTimeout(r, ms));
   const labels = () => [...document.querySelectorAll('.ctx-menu .ctx-item .ctx-label')].map(n => n.textContent);
+  // A browser sends mousedown first and only delivers a click if the element
+  // survived the press. Dispatching click unconditionally hides anything that
+  // tears the element down on mousedown.
+  const realClick = (el) => {
+    const r = el.getBoundingClientRect();
+    const at = { bubbles: true, clientX: Math.round(r.left + 5), clientY: Math.round(r.top + 5) };
+    el.dispatchEvent(new MouseEvent('mousedown', at));
+    if (!el.isConnected) return false;
+    el.dispatchEvent(new MouseEvent('mouseup', at));
+    el.dispatchEvent(new MouseEvent('click', at));
+    return true;
+  };
+  const itemNamed = (t) => [...document.querySelectorAll('.ctx-menu .ctx-item')]
+    .find(n => n.querySelector('.ctx-label').textContent === t);
   const hover = (el) => {
     const r = el.getBoundingClientRect();
     el.dispatchEvent(new MouseEvent('mousemove', {
@@ -120,10 +134,10 @@ const HELP = `
     hover([...document.querySelectorAll('.ctx-menu .ctx-item')]
       .find(n => n.querySelector('.ctx-label').textContent === 'Help'));
     await w(400);
-    [...document.querySelectorAll('.ctx-menu .ctx-item')]
-      .find(n => n.querySelector('.ctx-label').textContent === 'About Cobalt').click();
+    const survived = realClick(itemNamed('About Cobalt'));
     await w(700);
     return {
+      survived,
       aboutOpen: !!document.querySelector('.about-modal'),
       menusLeft: document.querySelectorAll('.ctx-menu').length,
       version: (document.querySelector('.about-ver') || {}).textContent || ''
@@ -131,9 +145,37 @@ const HELP = `
   })()`);
   if (!act.ok) fails++;
   const a = readJs(act.out);
+  expect(a.survived === true, 'pressing a submenu item does not tear the menu down first');
   expect(a.aboutOpen === true, 'choosing About actually opened it');
   expect(a.menusLeft === 0, 'the menu and its submenu both closed');
   expect(/Version \d/.test(a.version), `and it rendered (got "${a.version}")`);
+
+  console.log('\na File menu item, pressed the way a mouse does');
+
+  const fileItem = await run('menu-file.png', [], `(async () => {
+    ${HELP}
+    await w(900);
+    const before = window.__cobalt().tabs.length;
+    document.getElementById('app-menu').click();
+    await w(300);
+    hover(itemNamed('File'));
+    await w(400);
+    const target = itemNamed('New Query Tab');
+    const present = !!target;
+    const survived = present ? realClick(target) : false;
+    await w(600);
+    return {
+      present, survived, before,
+      after: window.__cobalt().tabs.length,
+      menusLeft: document.querySelectorAll('.ctx-menu').length
+    };
+  })()`);
+  if (!fileItem.ok) fails++;
+  const fi = readJs(fileItem.out);
+  expect(fi.present === true, 'the File submenu lists New Query Tab');
+  expect(fi.survived === true, 'the item is still there when the press lands');
+  expect(fi.after === fi.before + 1, `clicking it opens a tab (${fi.before} -> ${fi.after})`);
+  expect(fi.menusLeft === 0, 'and the menu closes afterwards');
 
   console.log('\ntoolbar buttons');
 

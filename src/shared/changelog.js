@@ -13,6 +13,16 @@
 
 const releases = [
   {
+    version: '0.12.2',
+    date: '2026-09-12',
+    title: 'Menu items respond to the mouse',
+    summary: 'Pressing a submenu item closed the menu before the click landed.',
+    changes: [
+      { type: 'fixed', text: 'Choosing anything from a submenu did nothing. A submenu is its own element rather than a child of the menu that opened it, so the parent treated a press inside it as a press outside itself and dismissed the whole chain on mousedown - leaving nothing for the click to land on. A press anywhere in the open chain now belongs to that menu.' },
+      { type: 'changed', text: 'The menu test presses the way a mouse does, sending mousedown first and only delivering a click if the item survived it. Dispatching a bare click event, which is what it did before, reaches a detached element quite happily and so reported the menu as working.' },
+    ],
+  },
+  {
     version: '0.12.1',
     date: '2026-09-12',
     title: 'Start connected',
