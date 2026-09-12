@@ -29,6 +29,7 @@ function textWidth(s, font) {
 }
 
 const NULL_TOKEN = Symbol('null');
+const UNSET = Symbol('unset');   // no staged value for this cell
 
 export class ResultGrid {
   constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, onCellMenu, readOnly = false } = {}) {
@@ -56,6 +57,7 @@ export class ResultGrid {
     this.deletes = new Set();   // rowIdx
     this.inserts = [];          // { id, values: Map(colIdx -> value|NULL_TOKEN) }
     this.insertSeq = 0;
+    this.undoStack = [];
 
     this.cursor = { row: 0, col: 0 };
     this.editing = null;
@@ -171,7 +173,7 @@ export class ResultGrid {
 
   renderFilterRow() {
     if (!this.columns.length) { this.filterRow.innerHTML = ''; return; }
-    const parts = [`<div class="gf rownum" style="width:${NUM_W}px"></div>`];
+    const parts = [`<div class="gf rownum" style="width:${NUM_W}px"><span class="gf-label">filter</span></div>`];
     this.columns.forEach((c, i) => {
       const amb = this.ambiguous(c.name);
       const err = this.filterError.get(i);
@@ -230,6 +232,7 @@ export class ResultGrid {
     this.edits.clear();
     this.deletes.clear();
     this.inserts = [];
+    this.undoStack = [];
     this.cursor = { row: 0, col: 0 };
     // Keep column widths steady across a re-run, so the grid doesn't reflow
     // under the cursor every time you sort or type a filter.
@@ -483,6 +486,7 @@ export class ResultGrid {
     const { row, col } = this.cursor;
     const mod = e.ctrlKey || e.metaKey;
 
+    if (mod && e.key.toLowerCase() === 'z') { this.undoLast(); e.preventDefault(); return; }
     if (mod && e.key.toLowerCase() === 'c') { this.copyCell(); e.preventDefault(); return; }
     if (mod && e.key === '0') { this.setValue(row, col, NULL_TOKEN); e.preventDefault(); return; }
 
@@ -630,6 +634,7 @@ export class ResultGrid {
   }
 
   setValue(display, col, value) {
+    this.undoStack.push({ kind: 'cell', display, col, prev: this.stagedAt(display, col) });
     const ref = this.at(display);
     if (ref.kind === 'new') {
       this.inserts[ref.pos].values.set(col, value);
@@ -650,6 +655,7 @@ export class ResultGrid {
   }
 
   clearEdit(display, col) {
+    this.undoStack.push({ kind: 'cell', display, col, prev: this.stagedAt(display, col) });
     const ref = this.at(display);
     if (ref.kind === 'new') this.inserts[ref.pos].values.delete(col);
     else {
@@ -663,6 +669,7 @@ export class ResultGrid {
   addRow() {
     if (!this.editable) { this.onStatus('This result is read-only.'); return; }
     this.inserts.push({ id: ++this.insertSeq, values: new Map() });
+    this.undoStack.push({ kind: 'insert', pos: this.inserts.length - 1 });
     this.render();
     this.setCursor(this.totalRows() - 1, 0, { scroll: true });
     this.onDirtyChange(this.dirtyCount());
@@ -676,6 +683,7 @@ export class ResultGrid {
       this.inserts.splice(ref.pos, 1);
       this.render();
     } else {
+      this.undoStack.push({ kind: 'delete', idx: ref.idx, was: this.deletes.has(ref.idx) });
       if (this.deletes.has(ref.idx)) this.deletes.delete(ref.idx);
       else this.deletes.add(ref.idx);
       this.renderRows();
@@ -684,11 +692,62 @@ export class ResultGrid {
   }
 
   discard() {
+    this.undoStack = [];
     this.edits.clear();
     this.deletes.clear();
     this.inserts = [];
     this.render();
     this.onDirtyChange(0);
+  }
+
+  /** The staged value for a cell, or UNSET when nothing is staged there. */
+  stagedAt(display, col) {
+    const ref = this.at(display);
+    if (ref.kind === 'new') {
+      const m = this.inserts[ref.pos].values;
+      return m.has(col) ? m.get(col) : UNSET;
+    }
+    const e = this.edits.get(ref.idx);
+    return e && e.has(col) ? e.get(col) : UNSET;
+  }
+
+  /** Put a staged value back exactly as it was, UNSET meaning "not staged". */
+  applyStaged(display, col, v) {
+    const ref = this.at(display);
+    if (ref.kind === 'new') {
+      if (v === UNSET) this.inserts[ref.pos].values.delete(col);
+      else this.inserts[ref.pos].values.set(col, v);
+      return;
+    }
+    let e = this.edits.get(ref.idx);
+    if (v === UNSET) {
+      if (e) { e.delete(col); if (!e.size) this.edits.delete(ref.idx); }
+      return;
+    }
+    if (!e) { e = new Map(); this.edits.set(ref.idx, e); }
+    e.set(col, v);
+  }
+
+  /**
+   * Step back one staged change. Nothing here has reached the database, so this
+   * is only unwinding what is on screen -- but a mistyped cell should not mean
+   * discarding every other edit to get rid of it.
+   */
+  undoLast() {
+    const op = this.undoStack.pop();
+    if (!op) { this.onStatus('Nothing to undo.'); return false; }
+    if (op.kind === 'cell') {
+      this.applyStaged(op.display, op.col, op.prev);
+      this.cursor = { row: Math.min(op.display, this.totalRows() - 1), col: op.col };
+    } else if (op.kind === 'insert') {
+      this.inserts.splice(op.pos, 1);
+    } else if (op.kind === 'delete') {
+      if (op.was) this.deletes.add(op.idx); else this.deletes.delete(op.idx);
+    }
+    this.render();
+    this.onDirtyChange(this.dirtyCount());
+    this.onStatus(this.dirtyCount() ? `Undone. ${this.changeSummary()} still staged.` : 'Undone. Nothing staged.');
+    return true;
   }
 
   /** The change set for the main process, or null when nothing is staged. */

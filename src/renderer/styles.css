@@ -996,3 +996,24 @@ tr.best .bar-fill { background: var(--green); }
 .tree-row.rel.browsing .name { color: var(--text); }
 .tree-row .twisty { cursor: pointer; border-radius: 3px; }
 .tree-row .twisty:hover { background: rgba(255,255,255,.1); color: var(--text); }
+
+/* ----------------------- pending changes bar ----------------------- */
+
+.pending-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  background: rgba(224, 163, 60, 0.10);
+  border-bottom: 1px solid rgba(224, 163, 60, 0.4);
+  font-size: 12px; color: var(--text-dim);
+}
+.pending-bar b { color: var(--amber); font-weight: 600; }
+.pb-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--amber); box-shadow: 0 0 0 3px rgba(224,163,60,.16);
+}
+.pb-hint { color: var(--text-faint); font-size: 11px; }
+
+.gf-label {
+  color: var(--text-faint); font-family: var(--ui);
+  font-size: 9.5px; letter-spacing: .3px; padding-right: 2px;
+}

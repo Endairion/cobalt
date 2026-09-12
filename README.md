@@ -54,6 +54,12 @@ Edits stage locally — dirty cells go amber, new rows green, deleted rows struc
 through — and `Commit` applies the whole batch in one transaction. Any failure rolls
 back everything and reports the SQLSTATE.
 
+**Nothing is written until you commit.** Filtering, sorting and paging only ever run a
+SELECT — there are tests that fingerprint the table before and after and assert it is
+unchanged. Editing a cell stages the change locally: the row goes amber, a bar above the
+grid says what is staged and that nothing has reached the database, and `Ctrl+Z` steps
+back one change. Only Commit writes, and it shows you what it will run first.
+
 **Values are text.** `bigint`, `numeric`, timestamps and `json` come back as the exact
 text Postgres produced, so nothing is mangled by JS number or Date coercion on the way
 to the grid and back.
@@ -195,6 +201,7 @@ node test/historyui.js    # recording, search, reuse
 node test/fkui.js         # travelling a key, referenced-by
 node test/menuui.js       # the in-app menu, toolbar buttons, real key presses
 node test/browseui.js     # click-to-browse, tab reuse, open as query
+node test/safetyui.js     # staged-change bar, undo, filtering writes nothing
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
