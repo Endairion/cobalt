@@ -5,6 +5,7 @@ import * as about from './about.js';
 import * as perf from './perf.js';
 import { isReadOnlyStatement } from '../shared/sqlkind.js';
 import * as history from './history.js';
+import { showMenu } from './menu.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -323,6 +324,7 @@ async function loadSchema(connId) {
   try {
     const tree = await api.connections.schema(connId);
     conn.tree = tree;
+    conn.fks = null;          // re-read alongside the schema
     if (!conn.expanded.size) {
       const pub = tree.schemas.find((s) => s.name === 'public') || tree.schemas[0];
       if (pub) conn.expanded.add(`schema:${pub.name}`);
@@ -776,6 +778,130 @@ async function runExplain(analyze) {
   }
 }
 
+/* ------------------------- foreign key travel ------------------------- */
+
+/** Foreign keys are fetched once per connection and cached alongside the schema. */
+async function loadForeignKeys(connId) {
+  const conn = state.conns.get(connId);
+  if (!conn || conn.fks) return conn ? conn.fks : null;
+  try {
+    conn.fks = await api.connections.fks(connId);
+  } catch {
+    conn.fks = { outgoing: {}, incoming: {} };
+  }
+  return conn.fks;
+}
+
+const relKey = (source) => (source ? `${source.schema}.${source.table}` : null);
+
+/** Tell the grid which of its columns are foreign keys, so it can mark them. */
+async function markForeignKeys(tab) {
+  const res = tab.results[tab.activeResult];
+  if (!tab.grid || !res || !res.source || !tab.connId) return;
+  const fks = await loadForeignKeys(tab.connId);
+  if (!fks || tab.results[tab.activeResult] !== res) return;
+  tab.grid.setForeignKeys(fks.outgoing[relKey(res.source)] || []);
+}
+
+const literal = (v) => (v === null || v === undefined
+  ? 'null'
+  : `'${String(v).replace(/'/g, "''")}'`);
+
+const whereFor = (cols, values) => cols
+  .map((c, i) => (values[i] === null || values[i] === undefined
+    ? `${qid(c)} is null`
+    : `${qid(c)} = ${literal(values[i])}`))
+  .join('\n  and ');
+
+function openRelated({ tab, schema, table, columns, values, title }) {
+  const sql = `select *\nfrom ${qrel(schema, table)}\nwhere ${whereFor(columns, values)};`;
+  newTab({ title, sql, run: true, kind: 'data', connId: tab.connId });
+}
+
+/**
+ * The cell menu: follow a foreign key out to the row it points at, or walk back
+ * from this row to everything referencing it.
+ */
+async function openCellMenu(tab, rowIdx, colIdx, at) {
+  const grid = tab.grid;
+  const res = tab.results[tab.activeResult];
+  if (!grid || !res) return;
+  const column = grid.columns[colIdx];
+  const value = grid.valueAt(rowIdx, colIdx);
+  const items = [];
+
+  const fks = res.source && tab.connId ? await loadForeignKeys(tab.connId) : null;
+  const here = relKey(res.source);
+  const colIndexByName = new Map(grid.columns.map((c, i) => [c.sourceColumn || c.name, i]));
+
+  // Outgoing: this row holds a key pointing somewhere else.
+  for (const fk of (fks && here ? fks.outgoing[here] || [] : [])) {
+    const idxs = fk.columns.map((n) => colIndexByName.get(n));
+    if (idxs.some((i) => i === undefined)) continue;          // key column not selected
+    if (!idxs.includes(colIdx)) continue;                     // not the column clicked
+    const values = idxs.map((i) => grid.valueAt(rowIdx, i));
+    const label = `Go to ${fk.refSchema}.${fk.refTable}`;
+    if (values.every((v) => v === null || v === undefined)) {
+      items.push({ label, sub: 'value is null', disabled: true });
+    } else {
+      items.push({
+        label,
+        sub: `${fk.refColumns.join(', ')} = ${values.map((v) => String(v)).join(', ')}`,
+        run: () => openRelated({
+          tab, schema: fk.refSchema, table: fk.refTable,
+          columns: fk.refColumns, values,
+          title: `${fk.refTable} ${values.join('/')}`,
+        }),
+      });
+    }
+  }
+
+  // Incoming: rows elsewhere pointing at this one.
+  const incoming = (fks && here ? fks.incoming[here] || [] : [])
+    .map((fk) => {
+      const idxs = fk.refColumns.map((n) => colIndexByName.get(n));
+      if (idxs.some((i) => i === undefined)) return null;      // referenced column not selected
+      return { fk, values: idxs.map((i) => grid.valueAt(rowIdx, i)) };
+    })
+    .filter(Boolean)
+    .filter((x) => x.values.some((v) => v !== null && v !== undefined));
+
+  if (incoming.length) {
+    if (items.length) items.push({ sep: true });
+    items.push({ header: 'Referenced by' });
+    for (const { fk, values } of incoming) {
+      items.push({
+        label: `${fk.schema}.${fk.table}`,
+        sub: fk.columns.join(', '),
+        run: () => openRelated({
+          tab, schema: fk.schema, table: fk.table,
+          columns: fk.columns, values,
+          title: `${fk.table} by ${fk.columns[0]}`,
+        }),
+      });
+    }
+  }
+
+  if (items.length) items.push({ sep: true });
+  items.push({
+    label: 'Filter this column by this value',
+    disabled: value === null || value === undefined,
+    run: () => {
+      grid.toggleFilter(true);
+      grid.filterText.set(colIdx, `'${String(value).replace(/'/g, "''")}'`);
+      grid.renderFilterRow();
+      grid.applyFilters();
+    },
+  });
+  items.push({ label: 'Copy value', run: () => { api.ui.copy(value === null ? '' : String(value)); toast('Copied.'); } });
+  items.push({
+    label: 'Copy column name',
+    run: () => { api.ui.copy(column ? column.name : ''); toast('Copied.'); },
+  });
+
+  showMenu(items, at);
+}
+
 /* ----------------------------- history ----------------------------- */
 
 history.wire({
@@ -1004,11 +1130,15 @@ function renderResults() {
       },
       onSort: (sort) => applySort(tab, sort),
       onNeedMore: () => loadPage(tab, { append: true }),
+      onCellMenu: (row, col, at) => openCellMenu(tab, row, col, at),
       readOnly: !!(state.conns.get(tab.connId) || {}).readOnly,
     });
   }
   tab.grid.el.style.display = '';
-  if (tab.grid.result !== res) tab.grid.load(res, { keepFilters: !!tab.reloadingFilter });
+  if (tab.grid.result !== res) {
+    tab.grid.load(res, { keepFilters: !!tab.reloadingFilter });
+    markForeignKeys(tab);
+  }
   renderGridToolbar();
 }
 

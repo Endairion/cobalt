@@ -987,6 +987,54 @@ class Manager {
     };
   }
 
+
+  /**
+   * Every foreign key in the database, indexed both ways.
+   *
+   * `outgoing[schema.table]` are the keys that table holds, so a cell value can
+   * be followed to the row it points at. `incoming[schema.table]` are the keys
+   * pointing back at it, which is what "referenced by" walks.
+   */
+  async foreignKeys(id) {
+    const conn = this.get(id);
+    const { rows } = await conn.pool.query(`
+      select c.conname,
+             ns.nspname  as schema,
+             cl.relname  as tbl,
+             rns.nspname as ref_schema,
+             rcl.relname as ref_tbl,
+             (select array_agg(a.attname::text order by k.ord)
+                from unnest(c.conkey) with ordinality k(attnum, ord)
+                join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as cols,
+             (select array_agg(a.attname::text order by k.ord)
+                from unnest(c.confkey) with ordinality k(attnum, ord)
+                join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) as ref_cols
+      from pg_constraint c
+      join pg_class cl      on cl.oid  = c.conrelid
+      join pg_namespace ns  on ns.oid  = cl.relnamespace
+      join pg_class rcl     on rcl.oid = c.confrelid
+      join pg_namespace rns on rns.oid = rcl.relnamespace
+      where c.contype = 'f'
+        and ns.nspname not in ('pg_catalog', 'information_schema')
+      order by ns.nspname, cl.relname, c.conname`);
+
+    const outgoing = {};
+    const incoming = {};
+    for (const r of rows) {
+      if (!r.cols || !r.ref_cols) continue;
+      const fk = {
+        name: r.conname,
+        schema: r.schema, table: r.tbl, columns: r.cols,
+        refSchema: r.ref_schema, refTable: r.ref_tbl, refColumns: r.ref_cols,
+      };
+      const from = `${r.schema}.${r.tbl}`;
+      const to = `${r.ref_schema}.${r.ref_tbl}`;
+      (outgoing[from] = outgoing[from] || []).push(fk);
+      (incoming[to] = incoming[to] || []).push(fk);
+    }
+    return { outgoing, incoming };
+  }
+
   async tableDdl(id, schema, table) {
     const conn = this.get(id);
     const { rows } = await conn.pool.query(

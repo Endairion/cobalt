@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('cobalt', {
     close: (id) => call('conn:close', id),
     schema: (id) => call('conn:schema', id),
     ddl: (id, schema, table) => call('conn:ddl', id, schema, table),
+    fks: (id) => call('conn:fks', id),
     stats: (id, schema, table) => call('conn:stats', id, schema, table),
   },
   query: {

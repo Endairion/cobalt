@@ -86,6 +86,11 @@ every sort column is non-nullable and sorted the same way, so deep pages stay fa
 anything else falls back to OFFSET and the toolbar says which is in use. A count-all
 button runs `COUNT(*)` over the whole filtered result on request.
 
+**Foreign key navigation.** Right-click a cell. A foreign key column offers the row it
+points at; any row offers a "Referenced by" list of the tables pointing back at it. Both
+open a new tab filtered to the matching rows. Key columns are marked `FK` in the header.
+Composite keys travel as a unit.
+
 **Query history.** `Ctrl+H`. Every run is recorded with its connection, duration, row
 count and any error, searchable across statements and connection names. Consecutive
 repeats collapse into one row with a run count, showing the fastest of those runs.
@@ -156,6 +161,7 @@ node test/version.test.js  # 10 checks: changelog data, CHANGELOG.md sync, git t
 node test/store.test.js    # 12 checks: ordering, duplication, password handling
 node test/history.test.js  # 16 checks: collapsing, search, trimming, torn writes
 node test/paging.test.js   # 20 checks: page stability, keyset vs offset, counting
+node test/fk.test.js       # 8 checks: both directions, composite and duplicate keys
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
@@ -167,6 +173,7 @@ node test/chrome.js       # frameless window controls, grid header geometry
 node test/perfui.js       # benchmark and plan panels
 node test/pagingui.js     # scroll-to-load, server sorting, count all
 node test/historyui.js    # recording, search, reuse
+node test/fkui.js         # travelling a key, referenced-by
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -205,6 +212,7 @@ src/renderer/
   about.js      About window and version history
   perf.js       benchmark comparison and EXPLAIN plan tree
   history.js    query history browser
+  menu.js       shared floating context menu
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   filter.js     filter expression parser
