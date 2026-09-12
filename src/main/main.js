@@ -274,6 +274,7 @@ handle('conn:close', (id) => manager.close(id));
 handle('conn:schema', (id) => manager.schemaTree(id));
 handle('conn:fks', (id) => manager.foreignKeys(id));
 handle('conn:ddl', (id, schema, table) => manager.tableDdl(id, schema, table));
+handle('conn:runDdl', (id, sql) => manager.ddl(id, sql));
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));
 
 handle('query:run', (id, tabKey, sql, opts) => manager.run(id, tabKey, sql, opts || {}));

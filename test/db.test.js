@@ -223,6 +223,35 @@ async function test(name, fn) {
     await ro.close(conn.id);
   });
 
+  await test('a read-only connection refuses schema changes too', async () => {
+    const ro = new Manager();
+    const conn = await ro.open({ ...CFG, name: 'RO', readOnly: true });
+    await assert.rejects(
+      () => ro.ddl(conn.id, 'create table shop.should_not_exist (x int)'),
+      /read-only/i
+    );
+    await ro.close(conn.id);
+    // And nothing was created behind the refusal.
+    const { results } = await m.run(id, 'tab1',
+      "select count(*)::text from pg_class where relname = 'should_not_exist'");
+    assert.strictEqual(results[0].rows[0][0], '0');
+  });
+
+  await test('a schema change runs off the pool, not a tab session', async () => {
+    // A tab sitting in an open transaction must not swallow the DDL.
+    await m.run(id, 'tabTx', 'begin');
+    await m.ddl(id, 'create table shop.ddl_probe (x int)');
+    await m.run(id, 'tabTx', 'rollback');
+    const { results } = await m.run(id, 'tab1',
+      "select count(*)::text from pg_class where relname = 'ddl_probe'");
+    assert.strictEqual(results[0].rows[0][0], '1', 'the table survives the rollback next door');
+    await m.ddl(id, 'drop table shop.ddl_probe');
+  });
+
+  await test('an empty statement is refused rather than sent', async () => {
+    await assert.rejects(() => m.ddl(id, '   '), /No statement/i);
+  });
+
   console.log('\nsessions & introspection');
 
   await test('each tab gets its own backend session', async () => {

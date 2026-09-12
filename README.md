@@ -79,6 +79,14 @@ parentheses — the ways it could end the statement and start another — and a 
 the SQL itself comes back from the server and is shown beside the box. Right-click a
 cell for "Filter by this value", which writes the condition into the bar for you.
 
+**Schema actions.** Right-click a table in the sidebar for Add Column, Create Index,
+Rename, Empty Table and Drop; right-click a column for Rename, Change Type, Set Default,
+Set/Drop NOT NULL and Drop Column. Each opens a small form with the exact statement
+underneath it, rebuilt as you type - you can copy it or send it to the editor instead of
+running it. Dropping and emptying ask a second time. A view is only offered what applies
+to a view, and is dropped as one. On a read-only connection every changing action is
+disabled with a line saying why, and the main process refuses the statement anyway.
+
 **Value inspector.** `Ctrl+I` opens a panel beside the grid showing the cell under
 the cursor at a size you can read: JSON pretty-printed, `bytea` as a hex dump with the
 printable bytes beside it, long text wrapped, `NULL` labelled rather than blank. The
@@ -159,6 +167,7 @@ node test/fk.test.js       # 8 checks: both directions, composite and duplicate 
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
 node test/where.test.js    # 18 checks: what an expression may contain, and may not
+node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
 node test/value.test.js    # 33 checks: JSON that survives pretty-printing, hex dumps
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
@@ -176,6 +185,7 @@ node test/safetyui.js     # staged-change bar, undo, filtering writes nothing
 node test/filterbarui.js  # the expression bar, column chooser, filter-by-value
 node test/reconnectui.js  # startup reopens what was connected
 node test/inspectorui.js  # the value panel: JSON, binary, the row view, staging an edit
+node test/schemaui.js     # the sidebar menu, the live SQL preview, the change landing
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -205,6 +215,7 @@ src/shared/
   stats.js      quantiles and the benchmark verdict rule
   whereclause.js  validation for a hand-written filter expression
   valueview.js  classifying and formatting one cell value
+  ddl.js        the SQL the schema actions generate
   sqlkind.js    whether a statement only reads
 src/main/
   main.js       window, menu, IPC surface, smoke mode
@@ -223,6 +234,7 @@ src/renderer/
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   inspector.js  the value panel beside the grid
+  schemaops.js  schema action dialogs, with a live SQL preview
   filter.js     filter expression parser
 ```
 

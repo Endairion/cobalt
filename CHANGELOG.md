@@ -3,6 +3,20 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.14.0 — Change the schema without writing the SQL
+*2026-09-12*
+
+Add a column, create an index, rename, drop - from the sidebar, with the statement shown first.
+
+### Added
+- Right-clicking a table in the sidebar now opens a menu rather than dumping its DDL into a tab: Browse, Show DDL, Copy name, Add Column, Create Index, Rename, Empty Table and Drop. Right-clicking a column offers Rename, Change Type, Set Default, Set or Drop NOT NULL, and Drop Column.
+- Every one of those opens a small form with the exact statement underneath it, rebuilt on each keystroke. You can copy it or send it to the editor instead of running it, so nothing happens that you have not read first. Dropping and emptying ask again through the OS dialog.
+- A view is not offered the table-only actions, and is dropped as a view rather than as a table. On a read-only connection every changing action is disabled with a line saying why - and the main process refuses schema changes regardless of what the window asks for, the same way it already refuses grid writes.
+
+### Changed
+- Schema changes run on the pool rather than in the tab session, so one sitting in an open transaction cannot swallow them.
+- The schema tree carries each column default, which is what the Set Default box starts from.
+
 ## 0.13.0 — The value inspector
 *2026-09-12*
 

@@ -878,6 +878,30 @@ class Manager {
    *            inserts:[{ values:{ colIndex: value } }],
    *            deletes:[{ keyValues:[…] }] }
    */
+  /**
+   * Run one schema statement built by src/shared/ddl.js.
+   *
+   * Separate from run() because it is not a tab's session: a schema change
+   * should not be sitting inside whatever transaction a query tab has open. It
+   * goes on the pool, on its own, and it obeys the read-only flag for the same
+   * reason applyChanges does — the flag has to hold even if the renderer asks.
+   */
+  async ddl(id, sql) {
+    const conn = this.get(id);
+    if (conn.config && conn.config.readOnly) {
+      throw new Error(`Connection "${conn.config.name || conn.id}" is marked read-only — nothing was changed.`);
+    }
+    const text = String(sql || '').trim();
+    if (!text) throw new Error('No statement to run.');
+    const started = Date.now();
+    const res = await conn.pool.query(text);
+    return {
+      command: Array.isArray(res) ? res[res.length - 1].command : res.command,
+      rowCount: Array.isArray(res) ? null : res.rowCount,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
   async applyChanges(id, change) {
     const conn = this.get(id);
     // Enforced here, not just in the UI: a connection the user marked read-only
@@ -963,16 +987,18 @@ class Manager {
       select n.nspname as schema, c.relname as table, a.attname as name,
              format_type(a.atttypid, a.atttypmod) as type,
              a.attnum::int as attnum, a.attnotnull as not_null,
+             pg_get_expr(ad.adbin, ad.adrelid) as default_expr,
              coalesce(bool_or(i.indisprimary), false) as is_pk
       from pg_attribute a
       join pg_class c on c.oid = a.attrelid
       join pg_namespace n on n.oid = c.relnamespace
+      left join pg_attrdef ad on ad.adrelid = c.oid and ad.adnum = a.attnum
       left join pg_index i on i.indrelid = c.oid and a.attnum = any(i.indkey) and i.indisprimary
       where a.attnum > 0 and not a.attisdropped
         and c.relkind in ('r','p','v','m','f')
         and n.nspname not in ('pg_catalog','information_schema')
         and n.nspname not like 'pg_toast%'
-      group by 1,2,3,4,5,6
+      group by 1,2,3,4,5,6,7
       order by 1, 2, 5`);
 
     const dbs = await conn.pool.query(
@@ -983,7 +1009,10 @@ class Manager {
     for (const c of cols.rows) {
       const k = `${c.schema}.${c.table}`;
       if (!byTable.has(k)) byTable.set(k, []);
-      byTable.get(k).push({ name: c.name, type: c.type, attnum: c.attnum, notNull: c.not_null, isPk: c.is_pk });
+      byTable.get(k).push({
+        name: c.name, type: c.type, attnum: c.attnum,
+        notNull: c.not_null, defaultExpr: c.default_expr, isPk: c.is_pk,
+      });
     }
 
     const schemas = new Map();

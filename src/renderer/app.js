@@ -9,6 +9,7 @@ import { showMenu } from './menu.js';
 import { validateWhere, andWith } from '../shared/whereclause.js';
 import * as appmenu from './appmenu.js';
 import * as inspector from './inspector.js';
+import * as schemaops from './schemaops.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -435,7 +436,7 @@ function renderSidebar() {
         </div>`);
         if (copen) {
           for (const c of r.columns) {
-            out.push(`<div class="tree-row column" title="${esc(c.name)} ${esc(c.type)}">
+            out.push(`<div class="tree-row column" data-conn-scope="${esc(live.id)}" data-column="${esc(sch.name)}|${esc(r.name)}|${esc(c.name)}" title="${esc(c.name)} ${esc(c.type)} — right-click to change it">
               <span class="name">${c.isPk ? '<span class="pk">PK </span>' : ''}${esc(c.name)}</span>
               <span class="ctype">${esc(c.type)}</span>
             </div>`);
@@ -453,6 +454,30 @@ function renderSidebar() {
 }
 
 const kindLabel = (k) => ({ r: 'T', p: 'P', v: 'V', m: 'MV', f: 'F' }[k] || '?');
+
+/** The loaded schema is the only description of a relation the renderer has. */
+function findRelation(conn, schema, name) {
+  if (!conn || !conn.tree) return null;
+  const sch = conn.tree.schemas.find((x) => x.name === schema);
+  return sch ? sch.relations.find((r) => r.name === name) || null : null;
+}
+
+function findColumn(conn, schema, table, colName) {
+  const rel = findRelation(conn, schema, table);
+  return rel ? rel.columns.find((c) => c.name === colName) || null : null;
+}
+
+schemaops.wire({
+  showOverlay: (node) => showOverlay(node),
+  runDdl: (connId, sql) => api.connections.runDdl(connId, sql),
+  // A schema change invalidates autocomplete, the tree and the FK map, so the
+  // whole thing is re-read rather than patched.
+  refresh: (connId) => loadSchema(connId),
+  confirm: (opts) => api.ui.confirm(opts),
+  copy: (text) => api.ui.copy(text),
+  toast: (m) => toast(m),
+  openSql: (sql, connId) => newTab({ title: 'Schema change', sql: `${sql}\n`, connId }),
+});
 
 function approx(n) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
@@ -528,18 +553,54 @@ el.tree.addEventListener('dblclick', (e) => {
 });
 
 el.tree.addEventListener('contextmenu', async (e) => {
+  const colRow = e.target.closest('[data-column]');
+  if (colRow) {
+    e.preventDefault();
+    const conn = state.conns.get(colRow.dataset.connScope);
+    if (!conn) return;
+    const [schema, table, colName] = colRow.dataset.column.split('|');
+    const column = findColumn(conn, schema, table, colName);
+    if (!column) return;
+    showMenu([
+      { header: `${table}.${colName}` },
+      { label: 'Copy name', run: () => { api.ui.copy(colName); toast('Copied.'); } },
+      { sep: true },
+      ...schemaops.columnMenuItems({ connId: conn.id, schema, table, column, readOnly: !!conn.readOnly }),
+    ], colRow);
+    return;
+  }
+
   const relRow = e.target.closest('[data-rel]');
   if (relRow) {
     e.preventDefault();
     const conn = state.conns.get(relRow.dataset.connScope);
     if (!conn) return;
     const [schema, name] = relRow.dataset.rel.split('|');
-    try {
-      const ddl = await api.connections.ddl(conn.id, schema, name);
-      newTab({ title: `${name} DDL`, sql: ddl + '\n', connId: conn.id });
-    } catch (err) { toast(err.message, 'err'); }
+    const rel = findRelation(conn, schema, name);
+    showMenu([
+      { header: `${schema}.${name}` },
+      { label: 'Browse', run: () => openTableTab(schema, name, conn.id) },
+      {
+        label: 'Show DDL',
+        run: async () => {
+          try {
+            const text = await api.connections.ddl(conn.id, schema, name);
+            newTab({ title: `${name} DDL`, sql: `${text}\n`, connId: conn.id });
+          } catch (err) { toast(err.message, 'err'); }
+        },
+      },
+      { label: 'Copy name', run: () => { api.ui.copy(`${schema}.${name}`); toast('Copied.'); } },
+      { sep: true },
+      ...schemaops.tableMenuItems({
+        connId: conn.id, schema, table: name,
+        kind: rel ? rel.kind : 'r',
+        columns: rel ? rel.columns : [],
+        readOnly: !!conn.readOnly,
+      }),
+    ], relRow);
     return;
   }
+
   const connRow = e.target.closest('[data-conn]');
   if (connRow) {
     e.preventDefault();
