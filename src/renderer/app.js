@@ -10,6 +10,7 @@ import { validateWhere, andWith } from '../shared/whereclause.js';
 import * as appmenu from './appmenu.js';
 import * as inspector from './inspector.js';
 import * as schemaops from './schemaops.js';
+import * as transfer from './transfer.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -467,6 +468,18 @@ function findColumn(conn, schema, table, colName) {
   return rel ? rel.columns.find((c) => c.name === colName) || null : null;
 }
 
+transfer.wire({
+  showOverlay: (node) => showOverlay(node),
+  saveText: (name, text, opts) => api.files.saveText(name, text, opts),
+  openText: (opts) => api.files.openText(opts),
+  importRows: (connId, spec) => api.connections.importRows(connId, spec),
+  // New rows change the row estimate in the tree, and may have changed nothing
+  // else; re-reading the schema is cheap next to the import itself.
+  refresh: (connId) => loadSchema(connId),
+  copy: (text) => api.ui.copy(text),
+  toast: (m, kind) => toast(m, kind),
+});
+
 schemaops.wire({
   showOverlay: (node) => showOverlay(node),
   runDdl: (connId, sql) => api.connections.runDdl(connId, sql),
@@ -591,6 +604,13 @@ el.tree.addEventListener('contextmenu', async (e) => {
       },
       { label: 'Copy name', run: () => { api.ui.copy(`${schema}.${name}`); toast('Copied.'); } },
       { sep: true },
+      {
+        label: 'Import CSV…',
+        disabled: !!conn.readOnly || !rel || !(rel.kind === 'r' || rel.kind === 'p'),
+        run: () => transfer.openImport({
+          connId: conn.id, schema, table: name, targetColumns: rel ? rel.columns : [],
+        }),
+      },
       ...schemaops.tableMenuItems({
         connId: conn.id, schema, table: name,
         kind: rel ? rel.kind : 'r',
@@ -1570,8 +1590,8 @@ function renderGridToolbar() {
        <button class="btn small ${dirty ? 'primary' : ''}" data-act="commit" ${dirty ? '' : 'disabled'}>Commit${dirty ? ` (${g.changeSummary()})` : ''}</button>
        <button class="btn small ghost" data-act="discard" ${dirty ? '' : 'disabled'}>Discard</button>
        ${pageSizePicker(ps)}
-       <button class="btn small ghost" data-act="csv">${ps && ps.hasMore ? 'CSV (loaded)' : 'CSV'}</button>`
-    : `<span class="spacer"></span>${filterBtn}${pageSizePicker(ps)}<button class="btn small ghost" data-act="csv">${ps && ps.hasMore ? 'CSV (loaded)' : 'CSV'}</button>`;
+       <button class="btn small ghost" data-act="csv" title="Export these rows as CSV, JSON, SQL or Markdown">Export</button>`
+    : `<span class="spacer"></span>${filterBtn}${pageSizePicker(ps)}<button class="btn small ghost" data-act="csv" title="Export these rows as CSV, JSON, SQL or Markdown">Export</button>`;
 
   el.gridToolbar.innerHTML = bits.join('') + actions;
   renderPendingBar();
@@ -1624,7 +1644,7 @@ function handleGridAction(actEl) {
     case 'del': tab.grid.toggleDelete(); break;
     case 'commit': commitGrid(); break;
     case 'discard': tab.grid.discard(); renderGridToolbar(); break;
-    case 'csv': exportCsv(); break;
+    case 'csv': exportResult(); break;
     case 'inspect': toggleInspector(); break;
     case 'count': countRows(tab); break;
     case 'filter': showFilterBar(); renderGridToolbar(); break;
@@ -1711,12 +1731,23 @@ async function commitGrid() {
   }
 }
 
-async function exportCsv() {
+function exportResult() {
   const tab = activeTab();
   if (!tab || !tab.grid) return;
-  const name = `${tab.title.replace(/[^\w.-]+/g, '_')}.csv`;
-  const path = await api.files.saveCsv(name, tab.grid.toCsv());
-  if (path) toast(`Saved ${path}`, 'ok');
+  const g = tab.grid;
+  const res = tab.results[tab.activeResult];
+  // Hidden columns are hidden here too: what you see is what you get.
+  const vis = g.visibleCols;
+  const columns = vis.map((i) => g.columns[i]);
+  const rows = [];
+  for (let d = 0; d < g.totalRows(); d++) rows.push(vis.map((c) => g.valueAt(d, c)));
+  transfer.openExport({
+    columns,
+    rows,
+    source: res && res.source,
+    title: tab.title,
+    hasMore: !!(tab.pageState && tab.pageState.hasMore),
+  });
 }
 
 /* ----------------------------- toolbar ----------------------------- */
@@ -2116,7 +2147,7 @@ function openCommandPalette() {
     { label: 'Benchmark statements…', sub: 'compare timings', run: runBenchmark },
     { label: 'Explain', run: () => runExplain(false) },
     { label: 'Explain analyze', run: () => runExplain(true) },
-    { label: 'Export result as CSV…', run: exportCsv },
+    { label: 'Export result…', sub: 'CSV, JSON, SQL, Markdown', run: exportResult },
     { label: 'Commit grid changes', run: commitGrid },
     { label: 'Query history…', sub: 'Ctrl+H', run: () => history.openHistory() },
     { label: 'Open SQL file…', run: openFile },
@@ -2334,7 +2365,7 @@ function menuCommand(cmd) {
       if (tab && tab.grid) openColumnChooser(el.gridToolbar.querySelector('[data-act="columns"]') || el.gridToolbar);
       break;
     case 'grid:inspect': toggleInspector(); break;
-    case 'result:csv': exportCsv(); break;
+    case 'result:export': exportResult(); break;
     case 'history:open': history.openHistory(); break;
     case 'palette:tables': openTablePalette(); break;
     case 'palette:commands': openCommandPalette(); break;
@@ -2397,6 +2428,16 @@ window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
 window.__cobaltMenu = (cmd) => menuCommand(cmd);
 window.__cobaltInspector = () => inspector.debugState();
+// Drives the import dialog without an OS file picker, which a test cannot answer.
+window.__cobaltImport = (schema, table, name, text) => {
+  const conn = state.conns.get(state.activeConnId);
+  const rel = findRelation(conn, schema, table);
+  transfer.openImport({
+    connId: conn.id, schema, table,
+    targetColumns: rel ? rel.columns : [],
+    file: { name, text, bytes: text.length, path: name },
+  });
+};
 window.__cobaltCursor = () => {
   const t = activeTab();
   return t && t.grid ? { ...t.grid.cursor } : { row: -1, col: -1 };

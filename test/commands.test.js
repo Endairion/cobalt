@@ -110,7 +110,7 @@ test('accelerators render for the platform', () => {
 test('the tree covers the features that have no other button', () => {
   const ids = new Set(commandIds());
   for (const id of ['history:open', 'perf:benchmark', 'perf:explain', 'perf:explainAnalyze',
-    'grid:filter', 'result:csv', 'connection:manage', 'help:about', 'schema:refresh']) {
+    'grid:filter', 'result:export', 'connection:manage', 'help:about', 'schema:refresh']) {
     assert.ok(ids.has(id), `${id} is reachable from the menu`);
   }
 });

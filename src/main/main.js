@@ -275,6 +275,7 @@ handle('conn:schema', (id) => manager.schemaTree(id));
 handle('conn:fks', (id) => manager.foreignKeys(id));
 handle('conn:ddl', (id, schema, table) => manager.tableDdl(id, schema, table));
 handle('conn:runDdl', (id, sql) => manager.ddl(id, sql));
+handle('conn:import', (id, spec) => manager.importRows(id, spec));
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));
 
 handle('query:run', (id, tabKey, sql, opts) => manager.run(id, tabKey, sql, opts || {}));
@@ -362,6 +363,33 @@ handle('file:saveCsv', async (suggestedName, text) => {
   if (r.canceled || !r.filePath) return null;
   fs.writeFileSync(r.filePath, '﻿' + text, 'utf8');
   return r.filePath;
+});
+
+handle('file:saveText', async (suggestedName, text, { ext = 'txt', label = 'File', bom = false } = {}) => {
+  const r = await dialog.showSaveDialog(win, {
+    defaultPath: suggestedName || `export.${ext}`,
+    filters: [{ name: label, extensions: [ext] }, { name: 'All files', extensions: ['*'] }],
+  });
+  if (r.canceled || !r.filePath) return null;
+  // Excel needs the BOM to read UTF-8; everything else is better off without it.
+  fs.writeFileSync(r.filePath, (bom ? '﻿' : '') + text, 'utf8');
+  return r.filePath;
+});
+
+const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
+
+handle('file:openText', async ({ label = 'CSV', extensions = ['csv', 'tsv', 'txt'] } = {}) => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ['openFile'],
+    filters: [{ name: label, extensions }, { name: 'All files', extensions: ['*'] }],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  const file = r.filePaths[0];
+  const { size } = fs.statSync(file);
+  if (size > MAX_IMPORT_BYTES) {
+    throw new Error(`That file is ${(size / 1024 / 1024).toFixed(0)} MB. Import reads the whole file into memory; use \copy in psql for one this big.`);
+  }
+  return { path: file, name: path.basename(file), bytes: size, text: fs.readFileSync(file, 'utf8') };
 });
 
 handle('dialog:confirm', async ({ title, message, detail, confirmLabel, destructive }) => {

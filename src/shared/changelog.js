@@ -13,6 +13,20 @@
 
 const releases = [
   {
+    version: '0.15.0',
+    date: '2026-09-13',
+    title: 'Data in and out',
+    summary: 'Export as CSV, TSV, JSON, SQL or Markdown; import a CSV into a table.',
+    changes: [
+      { type: 'added', text: 'The result toolbar Export button (Ctrl+Shift+X) offers CSV, TSV, JSON, SQL INSERT statements and a Markdown table, with the first lines of the chosen format shown before you pick a filename. Copy to clipboard is there too. Hidden columns stay hidden, so what you export is what you were looking at.' },
+      { type: 'added', text: 'Import CSV on a table in the sidebar. It reads the file, says what it found - row count, column count, which delimiter - and maps CSV headings to table columns by name, with every part of the guess editable. NOT NULL columns with no default are flagged if you leave them unmapped, and the first rows are previewed as they will be inserted.' },
+      { type: 'added', text: 'The whole import is one transaction: if a row fails, nothing is inserted and the error names the rows it was working on. A duplicate key can instead be told to skip that row and carry on.' },
+      { type: 'changed', text: 'A real CSV parser, not a split on commas: quoted fields hold delimiters and newlines, doubled quotes are one quote, and the delimiter is sniffed outside quotes. An empty unquoted field is NULL and an empty quoted field is the empty string, which is the only way a CSV can tell them apart - and the round trip keeps them apart.' },
+      { type: 'changed', text: 'JSON export writes numbers as numbers, but quotes any whose text JavaScript cannot hold exactly - a 20-digit bigint, or a numeric of 1.10 - rather than rounding it on the way out. SQL export quotes numerics for the same reason.' },
+      { type: 'changed', text: 'Import values are sent as text parameters and cast by Postgres, so nothing is concatenated into SQL and the server decides what a date or a numeric means.' },
+    ],
+  },
+  {
     version: '0.14.0',
     date: '2026-09-12',
     title: 'Change the schema without writing the SQL',

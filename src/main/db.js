@@ -902,6 +902,66 @@ class Manager {
     };
   }
 
+  /**
+   * Insert rows read from a file.
+   *
+   * Values go in as text parameters and Postgres casts them to whatever the
+   * column is, which is both safer and more faithful than guessing types here:
+   * a numeric keeps its scale, a timestamp is parsed by the server's own rules,
+   * and nothing is concatenated into SQL.
+   *
+   * The whole import is one transaction. A file that fails halfway leaves the
+   * table exactly as it was, and the error says which row stopped it.
+   */
+  async importRows(id, { schema, table, columns, rows, mode = 'insert' }) {
+    const conn = this.get(id);
+    if (conn.config && conn.config.readOnly) {
+      throw new Error(`Connection "${conn.config.name || conn.id}" is marked read-only — nothing was imported.`);
+    }
+    if (!columns || !columns.length) throw new Error('No columns were mapped.');
+    if (!rows || !rows.length) throw new Error('There are no rows to import.');
+
+    const rel = qname(schema, table);
+    const cols = columns.map((c) => qid(c)).join(', ');
+    const tail = mode === 'skipConflicts' ? ' on conflict do nothing' : '';
+
+    // Postgres takes at most 65535 bind parameters in one statement.
+    const perRow = columns.length;
+    const batchSize = Math.max(1, Math.min(1000, Math.floor(65000 / perRow)));
+
+    const client = await conn.pool.connect();
+    const started = Date.now();
+    let inserted = 0;
+    try {
+      await client.query('begin');
+      for (let i = 0; i < rows.length; i += batchSize) {
+        const chunk = rows.slice(i, i + batchSize);
+        const params = [];
+        const tuples = chunk.map((r) => {
+          const marks = r.map((v) => { params.push(v === undefined ? null : v); return `$${params.length}`; });
+          return `(${marks.join(', ')})`;
+        });
+        try {
+          const res = await client.query(
+            `insert into ${rel} (${cols}) values ${tuples.join(', ')}${tail}`, params);
+          inserted += res.rowCount || 0;
+        } catch (err) {
+          // Name the first row of the batch that failed, so a 10,000 line file
+          // does not just say "invalid input syntax" with no idea where.
+          err.message = `${err.message} (in rows ${i + 1}-${i + chunk.length} of the file)`;
+          throw err;
+        }
+      }
+      await client.query('commit');
+    } catch (err) {
+      try { await client.query('rollback'); } catch { /* the error above is the one that matters */ }
+      throw err;
+    } finally {
+      client.release();
+    }
+    return { inserted, skipped: rows.length - inserted, elapsedMs: Date.now() - started };
+  }
+
   async applyChanges(id, change) {
     const conn = this.get(id);
     // Enforced here, not just in the UI: a connection the user marked read-only

@@ -79,7 +79,23 @@ parentheses — the ways it could end the statement and start another — and a 
 the SQL itself comes back from the server and is shown beside the box. Right-click a
 cell for "Filter by this value", which writes the condition into the bar for you.
 
-**Schema actions.** Right-click a table in the sidebar for Add Column, Create Index,
+**Export.** The Export button on the result toolbar (`Ctrl+Shift+X`) writes CSV, TSV,
+JSON, SQL `INSERT` statements or a Markdown table, showing the first lines of the chosen
+format before you pick a filename - or copies it to the clipboard. Hidden columns stay
+hidden. JSON writes numbers as numbers but quotes any whose text JavaScript cannot hold
+exactly, so a 20-digit `bigint` or a `numeric` of `1.10` comes out intact rather than
+rounded.
+
+**Import.** Right-click a table for Import CSV. It reads the file, reports what it found
+and maps headings to columns by name, with every part of the guess editable; `NOT NULL`
+columns with no default are flagged if left unmapped. The parser is a real one - quoted
+fields hold delimiters and newlines, and an empty unquoted field is NULL while an empty
+quoted field is the empty string, which is the only way a CSV can tell them apart. The
+whole import is one transaction, and a failure names the rows it was working on and
+leaves the table untouched; a duplicate key can instead skip that row and carry on.
+Values go to Postgres as text parameters and are cast by the server.
+
+**Schema actions. Right-click a table in the sidebar for Add Column, Create Index,
 Rename, Empty Table and Drop; right-click a column for Rename, Change Type, Set Default,
 Set/Drop NOT NULL and Drop Column. Each opens a small form with the exact statement
 underneath it, rebuilt as you type - you can copy it or send it to the editor instead of
@@ -140,6 +156,7 @@ cannot drift out of sync with what the code handles.
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
 | `Ctrl+Shift+F` | Toggle the filter row |
 | `Ctrl+I` | Value inspector |
+| `Ctrl+Shift+X` | Export the result |
 | `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
 | `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
@@ -168,6 +185,7 @@ node test/db.test.js       # 25 checks: splitting, editability, commits, session
 node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
 node test/where.test.js    # 18 checks: what an expression may contain, and may not
 node test/ddl.test.js      # 27 checks: the SQL the schema actions generate
+node test/csv.test.js      # 35 checks: CSV round trips, JSON/SQL/Markdown export
 node test/value.test.js    # 33 checks: JSON that survives pretty-printing, hex dumps
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
@@ -186,6 +204,7 @@ node test/filterbarui.js  # the expression bar, column chooser, filter-by-value
 node test/reconnectui.js  # startup reopens what was connected
 node test/inspectorui.js  # the value panel: JSON, binary, the row view, staging an edit
 node test/schemaui.js     # the sidebar menu, the live SQL preview, the change landing
+node test/transferui.js   # every export format, and a CSV import that rolls back
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -216,6 +235,8 @@ src/shared/
   whereclause.js  validation for a hand-written filter expression
   valueview.js  classifying and formatting one cell value
   ddl.js        the SQL the schema actions generate
+  csv.js        a real CSV parser and writer
+  exporters.js  a result as CSV, TSV, JSON, SQL or Markdown
   sqlkind.js    whether a statement only reads
 src/main/
   main.js       window, menu, IPC surface, smoke mode
@@ -235,10 +256,12 @@ src/renderer/
   grid.js       virtualized editable grid + filter row
   inspector.js  the value panel beside the grid
   schemaops.js  schema action dialogs, with a live SQL preview
+  transfer.js   the export dialog and the CSV import dialog
   filter.js     filter expression parser
 ```
 
 ## Not built yet
 
-OR between filters, starred/saved snippets, saved snippets, ERD, `EXPLAIN` visualization, other engines. The driver
+SSH tunnels, OR between filters, saved snippets, a full object browser (functions,
+sequences, triggers), a process list, ERD, `EXPLAIN` visualization, other engines. The driver
 seam is `src/main/db.js`; the renderer never speaks Postgres directly.

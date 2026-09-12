@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('cobalt', {
     schema: (id) => call('conn:schema', id),
     ddl: (id, schema, table) => call('conn:ddl', id, schema, table),
     runDdl: (id, sql) => call('conn:runDdl', id, sql),
+    importRows: (id, spec) => call('conn:import', id, spec),
     fks: (id) => call('conn:fks', id),
     stats: (id, schema, table) => call('conn:stats', id, schema, table),
   },
@@ -72,6 +73,8 @@ contextBridge.exposeInMainWorld('cobalt', {
     open: () => call('file:open'),
     save: (name, text) => call('file:save', name, text),
     saveCsv: (name, text) => call('file:saveCsv', name, text),
+    saveText: (name, text, opts) => call('file:saveText', name, text, opts),
+    openText: (opts) => call('file:openText', opts),
   },
   ui: {
     confirm: (opts) => call('dialog:confirm', opts),

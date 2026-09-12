@@ -64,7 +64,7 @@ const MENU = [
       { id: 'grid:commit', label: 'Commit Grid Changes', accel: 'CmdOrCtrl+Shift+S' },
       { id: 'grid:discard', label: 'Discard Grid Changes' },
       { sep: true },
-      { id: 'result:csv', label: 'Export Result as CSV…' },
+      { id: 'result:export', label: 'Export Result…', accel: 'CmdOrCtrl+Shift+X' },
     ],
   },
   {
