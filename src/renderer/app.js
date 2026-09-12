@@ -6,6 +6,7 @@ import * as perf from './perf.js';
 import { isReadOnlyStatement } from '../shared/sqlkind.js';
 import * as history from './history.js';
 import { showMenu } from './menu.js';
+import { validateWhere, andWith } from '../shared/whereclause.js';
 import * as appmenu from './appmenu.js';
 
 const api = window.cobalt;
@@ -41,6 +42,9 @@ const el = {
   btnMore: $('btn-more'),
   dataHead: $('data-head'),
   pendingBar: $('pending-bar'),
+  filterBar: $('filter-bar'),
+  fbInput: $('fb-input'),
+  fbMsg: $('fb-msg'),
   appMenu: $('app-menu'),
 };
 
@@ -154,6 +158,11 @@ function selectTab(id) {
   updateToolbar();
   renderStatus();
   applyWorkareaMode();
+  if (!el.filterBar.hidden) {
+    const t = activeTab();
+    el.fbInput.value = t && t.pageState ? t.pageState.where : '';
+    setFilterMessage('');
+  }
 }
 
 async function closeTab(id) {
@@ -907,14 +916,15 @@ async function openCellMenu(tab, rowIdx, colIdx, at) {
 
   if (items.length) items.push({ sep: true });
   items.push({
-    label: 'Filter this column by this value',
+    label: 'Filter by this value',
+    sub: column ? column.name : '',
     disabled: value === null || value === undefined,
-    run: () => {
-      grid.toggleFilter(true);
-      grid.filterText.set(colIdx, `'${String(value).replace(/'/g, "''")}'`);
-      grid.renderFilterRow();
-      grid.applyFilters();
-    },
+    run: () => addCondition(`${qid(column.name)} = '${String(value).replace(/'/g, "''")}'`),
+  });
+  items.push({
+    label: 'Hide this column',
+    disabled: grid.columns.length < 2,
+    run: () => { grid.setHidden([...grid.hiddenCols, colIdx]); renderGridToolbar(); },
   });
   items.push({ label: 'Copy value', run: () => { api.ui.copy(value === null ? '' : String(value)); toast('Copied.'); } });
   items.push({
@@ -964,6 +974,150 @@ function recordHistory(tab, { sql, durationMs, rowCount, error, kind = 'query' }
     error: error || null,
     kind,
   }).catch(() => { /* history must never interrupt a query */ });
+}
+
+/* --------------------------- filter bar --------------------------- */
+
+/**
+ * One expression for the whole result rather than a box per column: you do not
+ * have to find the column to filter on it, and conditions can span columns.
+ * It is appended to the wrapper as `where (...)`, validated first for anything
+ * that would end the statement.
+ */
+function showFilterBar(show) {
+  const tab = activeTab();
+  const wanted = show === undefined ? el.filterBar.hidden : show;
+  el.filterBar.hidden = !wanted;
+  if (!wanted) return;
+  el.fbInput.value = tab && tab.pageState ? tab.pageState.where : '';
+  setFilterMessage('');
+  el.fbInput.focus();
+  el.fbInput.select();
+}
+
+function setFilterMessage(text, kind = '') {
+  el.fbMsg.textContent = text;
+  el.fbMsg.className = `fb-msg ${kind}`;
+}
+
+async function applyWhere(expr) {
+  const tab = activeTab();
+  if (!tab || !tab.pageState) return;
+  const text = String(expr == null ? el.fbInput.value : expr).trim();
+
+  const check = validateWhere(text);
+  if (!check.ok) { setFilterMessage(check.error, 'err'); el.fbInput.focus(); return; }
+
+  if (tab.grid && tab.grid.dirtyCount()) {
+    const ok = await api.ui.confirm({
+      title: 'Uncommitted changes',
+      message: `Filtering discards ${tab.grid.changeSummary()}.`,
+      confirmLabel: 'Discard and filter',
+      destructive: true,
+    });
+    if (!ok) return;
+    tab.grid.discard();
+  }
+
+  tab.pageState.where = text;
+  tab.pageState.total = null;
+  el.fbInput.value = text;
+  setFilterMessage(text ? 'Filtered' : '', text ? 'ok' : '');
+  await loadPage(tab);
+  // A bad expression comes back as a normal query error; say so next to the box.
+  const res = tab.results[tab.activeResult];
+  if (res && res.error) setFilterMessage(res.error.message, 'err');
+  renderGridToolbar();
+}
+
+el.filterBar.addEventListener('click', (e) => {
+  const act = e.target.closest('[data-fb]');
+  if (!act) return;
+  if (act.dataset.fb === 'apply') applyWhere();
+  else if (act.dataset.fb === 'clear') { el.fbInput.value = ''; applyWhere(''); }
+});
+
+el.fbInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); applyWhere(); }
+  else if (e.key === 'Escape') {
+    e.preventDefault();
+    const tab = activeTab();
+    if (el.fbInput.value) { el.fbInput.value = ''; applyWhere(''); }
+    else showFilterBar(false);
+  }
+});
+
+/** Add a condition to whatever is already in the box. */
+function addCondition(condition) {
+  const tab = activeTab();
+  if (!tab || !tab.pageState) return;
+  showFilterBar(true);
+  applyWhere(andWith(tab.pageState.where, condition));
+}
+
+/* ------------------------- column visibility ------------------------- */
+
+function openColumnChooser(anchorEl) {
+  const tab = activeTab();
+  const grid = tab && tab.grid;
+  if (!grid || !grid.columns.length) return;
+
+  document.querySelectorAll('.col-panel').forEach((n) => n.remove());
+  const panel = document.createElement('div');
+  panel.className = 'col-panel';
+  panel.innerHTML = `
+    <div class="cp-head">
+      <span>Columns</span>
+      <span class="spacer"></span>
+      <button class="btn small ghost" data-cp="all">All</button>
+      <button class="btn small ghost" data-cp="none">None</button>
+    </div>
+    <div class="cp-list">
+      ${grid.columns.map((c, i) => `
+        <label class="cp-row">
+          <input type="checkbox" data-col="${i}" ${grid.hiddenCols.has(i) ? '' : 'checked'} />
+          <span class="cp-name">${esc(c.name)}</span>
+          ${c.dataType ? `<span class="cp-type">${esc(c.dataType)}</span>` : ''}
+        </label>`).join('')}
+    </div>`;
+  document.body.append(panel);
+
+  const r = anchorEl.getBoundingClientRect();
+  panel.style.left = `${Math.max(6, Math.min(r.left, window.innerWidth - panel.offsetWidth - 8))}px`;
+  panel.style.top = `${Math.min(r.bottom + 4, window.innerHeight - panel.offsetHeight - 8)}px`;
+
+  const apply = () => {
+    const hidden = [...panel.querySelectorAll('input[data-col]')]
+      .filter((b) => !b.checked)
+      .map((b) => Number(b.dataset.col));
+    grid.setHidden(hidden);
+    // setHidden can refuse to hide the last column; mirror whatever it settled on.
+    panel.querySelectorAll('input[data-col]').forEach((b) => {
+      b.checked = !grid.hiddenCols.has(Number(b.dataset.col));
+    });
+    renderGridToolbar();
+  };
+
+  panel.addEventListener('change', apply);
+  panel.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-cp]');
+    if (!act) return;
+    const on = act.dataset.cp === 'all';
+    panel.querySelectorAll('input[data-col]').forEach((b) => { b.checked = on; });
+    apply();
+  });
+
+  const close = () => {
+    panel.remove();
+    document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('keydown', onKey, true);
+  };
+  const onDown = (e) => { if (!panel.contains(e.target) && e.target !== anchorEl) close(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  setTimeout(() => {
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+  }, 0);
 }
 
 /* ---------------------------- browsing ---------------------------- */
@@ -1051,6 +1205,7 @@ function newPageState(baseSql) {
   return {
     baseSql,
     filters: [],
+    where: '',
     sort: [],
     limit: state.pageSize,
     loaded: 0,
@@ -1073,6 +1228,7 @@ async function loadPage(tab, { append = false } = {}) {
 
   const opts = {
     filters: ps.filters,
+    where: ps.where,
     sort: ps.sort,
     limit: ps.limit,
     offset: append ? ps.loaded : 0,
@@ -1120,7 +1276,7 @@ function pageStatus(tab) {
   const bits = [`${fmtNum(ps.loaded)}${ps.hasMore ? '+' : ''} rows`];
   if (ps.total != null) bits.push(`of ${fmtNum(ps.total)}`);
   if (ps.sort.length) bits.push(`sorted by ${ps.sort.map((x) => `${x.name} ${x.dir}`).join(', ')}`);
-  if (ps.filters.length) bits.push(`${ps.filters.length} filter${ps.filters.length > 1 ? 's' : ''}`);
+  if (ps.where) bits.push('filtered');
   return bits.join(' · ');
 }
 
@@ -1145,7 +1301,7 @@ async function countRows(tab) {
   if (!ps) return;
   setStatus('Counting…');
   try {
-    const { count, elapsedMs } = await api.query.count(tab.connId, tab.id, ps.baseSql, ps.filters);
+    const { count, elapsedMs } = await api.query.count(tab.connId, tab.id, ps.baseSql, ps.filters, ps.where);
     ps.total = count;
     renderGridToolbar();
     setStatus(`${fmtNum(count)} rows total · counted in ${fmtMs(elapsedMs)}`);
@@ -1224,10 +1380,6 @@ function renderResults() {
     tab.grid = new ResultGrid(el.gridHost, {
       onDirtyChange: () => { renderGridToolbar(); renderPendingBar(); renderTabs(); },
       onStatus: (s) => { el.statusRight.textContent = s; },
-      onFilter: (specs) => {
-        if (tab.pageState) { tab.pageState.filters = specs; tab.pageState.total = null; loadPage(tab); }
-        else applyFilters(tab, specs);
-      },
       onSort: (sort) => applySort(tab, sort),
       onNeedMore: () => loadPage(tab, { append: true }),
       onCellMenu: (row, col, at) => openCellMenu(tab, row, col, at),
@@ -1271,12 +1423,15 @@ function renderGridToolbar() {
   } else if (!res.editable) {
     bits.push(`<span class="pill warn" title="${esc(res.notEditableReason || '')}">read-only</span>`);
   }
-  const nFilters = g ? g.activeFilters() : 0;
-  if (nFilters) bits.push(`<span class="pill on">${nFilters} filter${nFilters > 1 ? 's' : ''}</span>`);
+  const whereText = ps ? ps.where : '';
+  if (whereText) bits.push(`<span class="pill on" title="${esc(whereText)}">filtered</span>`);
+  const nHidden = g ? g.hiddenCols.size : 0;
+  if (nHidden) bits.push(`<span class="pill">${nHidden} column${nHidden > 1 ? 's' : ''} hidden</span>`);
 
   const filterBtn =
-    `<button class="btn small ${g && g.filterVisible ? 'primary' : 'ghost'}" data-act="filter" title="Filter results (Ctrl+Shift+F)">Filter</button>` +
-    (nFilters ? '<button class="btn small ghost" data-act="clearFilters">Clear</button>' : '');
+    `<button class="btn small ${el.filterBar.hidden ? 'ghost' : 'primary'}" data-act="filter" title="Filter these rows (Ctrl+Shift+F)">Filter</button>` +
+    (whereText ? '<button class="btn small ghost" data-act="clearFilters">Clear</button>' : '') +
+    '<button class="btn small ghost" data-act="columns" title="Choose which columns to show">Columns</button>';
 
   const actions = canEdit
     ? `<span class="spacer"></span>
@@ -1342,8 +1497,9 @@ function handleGridAction(actEl) {
     case 'discard': tab.grid.discard(); renderGridToolbar(); break;
     case 'csv': exportCsv(); break;
     case 'count': countRows(tab); break;
-    case 'filter': tab.grid.toggleFilter(); renderGridToolbar(); break;
-    case 'clearFilters': tab.grid.clearFilters(); renderGridToolbar(); break;
+    case 'filter': showFilterBar(); renderGridToolbar(); break;
+    case 'clearFilters': el.fbInput.value = ''; applyWhere(''); break;
+    case 'columns': openColumnChooser(actEl); break;
   }
 }
 
@@ -2008,11 +2164,10 @@ function menuCommand(cmd) {
     case 'grid:discard': if (tab && tab.grid) { tab.grid.discard(); renderGridToolbar(); } break;
     case 'grid:addRow': if (tab && tab.grid) tab.grid.addRow(); break;
     case 'grid:deleteRow': if (tab && tab.grid) tab.grid.toggleDelete(); break;
-    case 'grid:filter':
-      if (tab && tab.grid) { tab.grid.toggleFilter(); renderGridToolbar(); }
-      break;
-    case 'grid:clearFilters':
-      if (tab && tab.grid) { tab.grid.clearFilters(); renderGridToolbar(); }
+    case 'grid:filter': showFilterBar(); renderGridToolbar(); break;
+    case 'grid:clearFilters': el.fbInput.value = ''; applyWhere(''); break;
+    case 'grid:columns':
+      if (tab && tab.grid) openColumnChooser(el.gridToolbar.querySelector('[data-act="columns"]') || el.gridToolbar);
       break;
     case 'result:csv': exportCsv(); break;
     case 'history:open': history.openHistory(); break;

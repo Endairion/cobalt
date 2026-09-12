@@ -42,17 +42,11 @@ const shots = [
   {
     file: 'filter.png',
     cmds: ['query:run', 'grid:filter'],
-    // Type into two filter boxes and press Enter, the way a person would.
+    // One expression across columns, the way a person would type it.
     js: `(() => {
-      const set = (col, text) => {
-        const i = document.querySelector('input[data-filter="' + col + '"]');
-        i.value = text;
-        i.dispatchEvent(new Event('input', { bubbles: true }));
-      };
-      set(2, 'customer 1');
-      set(3, '>= 500');
-      const last = document.querySelector('input[data-filter="3"]');
-      last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const i = document.getElementById('fb-input');
+      i.value = "full_name ilike '%customer 1%' and balance >= 500";
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     })()`,
   },
 ];

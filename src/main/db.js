@@ -4,6 +4,7 @@ const { Pool, Client, types } = require('pg');
 const { splitStatements } = require('./sqlsplit');
 const { summarize, compare } = require('../shared/stats');
 const { isReadOnlyStatement } = require('../shared/sqlkind');
+const { validateWhere } = require('../shared/whereclause');
 
 /* ------------------------------------------------------------------ *
  * Type handling
@@ -313,11 +314,18 @@ const orderClause = (sort) => sort.map((s) =>
  * anything else falls back to OFFSET.
  */
 function buildPagedQuery(baseSql, {
-  filters = [], sort = [], limit = null, offset = 0, after = null,
+  filters = [], where = '', sort = [], limit = null, offset = 0, after = null,
 } = {}) {
   const { inner, baseLimit, baseOffset } = parseLimitTail(baseSql);
   const values = [];
   const conds = buildFilterConds(filters, values);
+
+  // A hand-written condition, checked for anything that would escape the wrapper.
+  if (String(where || '').trim()) {
+    const v = validateWhere(where);
+    if (!v.ok) throw new Error(v.error);
+    conds.push(`(${String(where).trim()})`);
+  }
   let strategy = 'offset';
 
   if (after && after.length && sort.length === after.length) {
@@ -330,7 +338,7 @@ function buildPagedQuery(baseSql, {
     }
   }
 
-  const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
+  const whereSql = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
   const order = sort.length ? `\norder by ${orderClause(sort)}` : '';
 
   // The caller's own LIMIT caps the whole set; a page is served from inside it.
@@ -346,7 +354,7 @@ function buildPagedQuery(baseSql, {
     : `\nlimit ${Math.max(0, Math.floor(pageLimit))}${pageOffset ? ` offset ${Math.floor(pageOffset)}` : ''}`;
 
   return {
-    text: `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}${order}${tail}`,
+    text: `select * from (\n${inner}\n) as ${qid('_cobalt')}${whereSql}${order}${tail}`,
     values,
     strategy,
     baseLimit,
@@ -736,7 +744,7 @@ class Manager {
    * comparison then addresses exactly one row.
    */
   async runPaged(id, tabKey, baseSql, {
-    filters = [], sort = [], limit = 500, offset = 0, after = null, maxRows = 20000,
+    filters = [], where = '', sort = [], limit = 500, offset = 0, after = null, maxRows = 20000,
   } = {}) {
     const conn = this.get(id);
     const session = conn.session(tabKey);
@@ -777,6 +785,7 @@ class Manager {
 
       const built = buildPagedQuery(baseSql, {
         filters,
+        where,
         sort: effectiveSort,
         limit: limit + 1,                      // one extra row answers "is there more?"
         offset,
@@ -808,10 +817,11 @@ class Manager {
         results: [{
           ...shaped,
           baseSql,
-          filtered: filters.length > 0,
+          filtered: filters.length > 0 || !!String(where || '').trim(),
           page: {
             limit,
             offset,
+            where,
             hasMore,
             strategy: built.strategy,
             sort,
@@ -830,18 +840,23 @@ class Manager {
   }
 
   /** Exact row count for the current query and filters. Can be slow, so it is asked for. */
-  async countRows(id, tabKey, baseSql, filters = []) {
+  async countRows(id, tabKey, baseSql, filters = [], where = '') {
     const conn = this.get(id);
     const session = conn.session(tabKey);
     const client = await session.ensure();
     const { inner, baseLimit, baseOffset } = parseLimitTail(baseSql);
     const values = [];
     const conds = buildFilterConds(filters, values);
-    const where = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
+    if (String(where || '').trim()) {
+      const v = validateWhere(where);
+      if (!v.ok) throw new Error(v.error);
+      conds.push(`(${String(where).trim()})`);
+    }
+    const whereSql = conds.length ? `\nwhere ${conds.join('\n  and ')}` : '';
     // A caller-supplied LIMIT bounds the count too, so honour it.
     const bounded = baseLimit == null
-      ? `select * from (\n${inner}\n) as ${qid('_cobalt')}${where}`
-      : `select * from (\n${inner}\n) as ${qid('_cobalt')}${where} limit ${baseLimit}${baseOffset ? ` offset ${baseOffset}` : ''}`;
+      ? `select * from (\n${inner}\n) as ${qid('_cobalt')}${whereSql}`
+      : `select * from (\n${inner}\n) as ${qid('_cobalt')}${whereSql} limit ${baseLimit}${baseOffset ? ` offset ${baseOffset}` : ''}`;
     const began = Date.now();
     const r = await client.query({ text: `select count(*)::bigint as n from (\n${bounded}\n) as ${qid('_cobalt_count')}`, values });
     return { count: Number(r.rows[0].n), elapsedMs: Date.now() - began };

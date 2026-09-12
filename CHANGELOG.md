@@ -3,6 +3,19 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.12.0 — One filter for the whole result
+*2026-09-12*
+
+Write a condition instead of hunting for the column.
+
+### Added
+- Anything Postgres accepts in a WHERE clause works, including functions, casts and JSON operators. It is validated first for semicolons, comments, dollar quoting and unbalanced parentheses - the ways an expression could end the statement and start another - and a mistake in the SQL itself comes back from the server and is shown beside the box.
+- A Columns button chooses which columns to show. Hidden columns leave the grid, the CSV export and the clipboard, and keyboard navigation skips them; the last visible column cannot be hidden.
+- Right-clicking a cell offers "Filter by this value", which writes the condition into the bar and leaves it there to edit, and "Hide this column".
+
+### Changed
+- The per-column filter boxes are replaced by a single expression bar (Ctrl+Shift+F). Write something like "balance > 500 and notes is not null" and it applies to the whole result, so a column far off to the right no longer has to be scrolled to, and one condition can span several columns.
+
 ## 0.11.2 — Typing in a filter box stays there
 *2026-09-12*
 

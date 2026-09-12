@@ -1025,3 +1025,56 @@ tr.best .bar-fill { background: var(--green); }
   background: rgba(255, 255, 255, 0.05);
 }
 .grid-filter:focus-within ~ .grid-body .grow.cursor-row { background: transparent; }
+
+/* ---------------------------- filter bar ---------------------------- */
+
+.filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.fb-label {
+  color: var(--accent-text); font-family: var(--mono);
+  font-size: 11.5px; font-weight: 600; flex: none;
+}
+#fb-input {
+  flex: 1 1 auto; min-width: 0;
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 9px; outline: none;
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  user-select: text;
+}
+#fb-input:focus { border-color: var(--accent); background: var(--bg); }
+#fb-input::placeholder { color: var(--text-faint); opacity: .6; }
+.fb-msg { font-size: 11.5px; color: var(--text-faint); flex: none; max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-msg.err { color: var(--red); }
+.fb-msg.ok { color: var(--green); }
+
+/* -------------------------- column chooser -------------------------- */
+
+.col-panel {
+  position: fixed; z-index: 80;
+  width: 260px; max-height: 60vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong); border-radius: 9px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.5);
+  overflow: hidden;
+}
+.cp-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  color: var(--text-dim); font-size: 11.5px;
+}
+.cp-list { overflow: auto; padding: 5px; }
+.cp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  white-space: nowrap;
+}
+.cp-row:hover { background: var(--bg-sunken); }
+.cp-row input { width: auto; }
+.cp-name { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
+.cp-type { margin-left: auto; color: var(--text-faint); font-size: 10.5px; padding-left: 8px; }

@@ -64,68 +64,21 @@ back one change. Only Commit writes, and it shows you what it will run first.
 text Postgres produced, so nothing is mangled by JS number or Date coercion on the way
 to the grid and back.
 
-**Filter row.** `Ctrl+Shift+F` drops a filter box under every column header. Filters
-run on the *server*: the base query is wrapped in a subquery, the condition goes on the
-outside, and any trailing `LIMIT`/`OFFSET` is hoisted out past it — so filtering a
-`limit 500` table view searches the whole table, not just the 500 rows already loaded.
-Postgres propagates each column's origin through the wrapper, so a filtered result
-stays editable. Values are always bound as parameters and operators come from a fixed
-allowlist; nothing you type reaches the SQL text.
+**Filtering.** `Ctrl+Shift+F` opens one expression bar for the whole result: write
+`balance > 500 and notes is not null` rather than finding each column. Anything Postgres
+accepts in a `WHERE` works — functions, casts, JSON operators. It runs on the *server*:
+the query is wrapped in a subquery, the condition goes on the outside, and any trailing
+`LIMIT`/`OFFSET` is hoisted past it, so filtering a table view searches the whole table
+rather than the page already loaded. Postgres propagates each column's origin through
+the wrapper, so a filtered result stays editable.
 
-The syntax is forgiving — a bare word means "contains" on a text column and "equals"
-everywhere else:
+The expression is checked first for semicolons, comments, dollar quoting and unbalanced
+parentheses — the ways it could end the statement and start another — and a mistake in
+the SQL itself comes back from the server and is shown beside the box. Right-click a
+cell for "Filter by this value", which writes the condition into the bar for you.
 
-| you type | you get |
-|---|---|
-| `bob` | `ilike '%bob%'` on text, `= bob` otherwise |
-| `>= 100`, `!= draft`, `< 5` | that comparison |
-| `%ob%` | `ilike '%ob%'` verbatim |
-| `~ ^user[0-9]+` | regex (`~*`, `!~`, `!~*` too) |
-| `in a, b, 'c, d'` | `in (…)`, quotes protect commas |
-| `null`, `!null` | `is null` / `is not null` |
-| `'bob'` | exact match, quotes override "contains" |
-
-Filters across columns are ANDed. `Enter` applies, `Esc` clears the box then closes the
-row, and the toolbar shows how many are active with a Clear button.
-
-**Browsing.** Click a table in the sidebar and its rows appear straight away — no query
-to write, and the editor steps aside so the grid gets the whole pane. The arrow beside a
-table expands its columns instead. One browse tab per connection follows your clicks;
-double-click a table for a separate query tab. "Open as query" turns a browse tab into a
-normal one, statement and all.
-
-**Paging and sorting.** Results page in as you scroll rather than stopping at a cap,
-and clicking a header sorts on the server, so the top row is the maximum in the table
-and not just in what was loaded. Whatever you sort by, the unique key is appended as a
-tiebreaker — without a total order, paging silently drops and repeats rows wherever the
-sort ties. With that in place, keyset paging (`where (a, b) > ($1, $2)`) is used when
-every sort column is non-nullable and sorted the same way, so deep pages stay fast;
-anything else falls back to OFFSET and the toolbar says which is in use. A count-all
-button runs `COUNT(*)` over the whole filtered result on request.
-
-**Foreign key navigation.** Right-click a cell. A foreign key column offers the row it
-points at; any row offers a "Referenced by" list of the tables pointing back at it. Both
-open a new tab filtered to the matching rows. Key columns are marked `FK` in the header.
-Composite keys travel as a unit.
-
-**Query history.** `Ctrl+H`. Every run is recorded with its connection, duration, row
-count and any error, searchable across statements and connection names. Consecutive
-repeats collapse into one row with a run count, showing the fastest of those runs.
-Stored as JSON Lines in `userData/cobalt-history.jsonl`, trimmed to 5,000 entries.
-
-**Performance tools.** `Ctrl+Shift+B` benchmarks the statements in the tab (or the
-selection) against each other: median, min, p95, max and spread per variant, ranked,
-with the interquartile range drawn on each bar. Runs are interleaved rather than
-grouped so a busy moment hits every variant equally, and warmups are discarded. A win
-is only declared when the p75 of the fastest still beats the p25 of the runner-up —
-otherwise it says so rather than crowning noise. Benchmarking a statement that writes
-is refused unless you enable roll-back-each-run.
-
-`Ctrl+Shift+E` explains, `Ctrl+Alt+E` explains and analyzes. The plan is drawn as a
-tree with self time per node, its share of execution, actual against estimated rows,
-cost and buffers; the slowest node is flagged, and rows estimates out by 10x or more
-are called out because that is usually why the planner chose the shape it did. EXPLAIN
-ANALYZE on a write runs inside a transaction that is rolled back.
+**Columns.** The Columns button chooses what to show. Hidden columns leave the grid, the
+CSV export and the clipboard, and arrow keys skip them.
 
 **Errors.** Message, SQLSTATE, detail, hint, plus the offending line with a caret under
 the error position — and the editor caret jumps there.
@@ -188,7 +141,8 @@ node test/history.test.js  # 16 checks: collapsing, search, trimming, torn write
 node test/paging.test.js   # 20 checks: page stability, keyset vs offset, counting
 node test/fk.test.js       # 8 checks: both directions, composite and duplicate keys
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
-node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
+node test/filter.test.js  # 31 checks: parsing, SQL construction, live filtering
+node test/where.test.js    # 18 checks: what an expression may contain, and may not
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
 node test/smoke.js        # boots the real UI, drives it, writes shots/*.png
 node test/manager.js      # multi-connection sidebar, manager dialog, tab rebinding
@@ -202,7 +156,7 @@ node test/fkui.js         # travelling a key, referenced-by
 node test/menuui.js       # the in-app menu, toolbar buttons, real key presses
 node test/browseui.js     # click-to-browse, tab reuse, open as query
 node test/safetyui.js     # staged-change bar, undo, filtering writes nothing
-node test/filterfocusui.js # filter focus, and keys staying in the filter box
+node test/filterbarui.js  # the expression bar, column chooser, filter-by-value
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -229,6 +183,7 @@ src/shared/
   changelog.js  release history as data; CHANGELOG.md is generated from it
   commands.js   the menu tree, shared by the native menu and the in-app one
   stats.js      quantiles and the benchmark verdict rule
+  whereclause.js  validation for a hand-written filter expression
   sqlkind.js    whether a statement only reads
 src/main/
   main.js       window, menu, IPC surface, smoke mode
