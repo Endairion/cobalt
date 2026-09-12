@@ -8,6 +8,7 @@ const { Store } = require('./store');
 const { History } = require('./history');
 const changelog = require('../shared/changelog');
 const pkg = require('../../package.json');
+const { menuFor, roleNames } = require('../shared/commands');
 
 const isMac = process.platform === 'darwin';
 const manager = new Manager();
@@ -121,6 +122,22 @@ async function runSmoke(w) {
     try {
       if (!await untilReady(25000)) throw new Error('renderer never reported ready');
       for (const c of cmds) { send(c); await wait(1200); }
+      // Optional real key presses, to prove accelerators reach the app.
+      const keysArg = process.argv.find((a) => a.startsWith('--smoke-keys='));
+      if (keysArg) {
+        w.focus();
+        await wait(300);
+        for (const combo of keysArg.slice('--smoke-keys='.length).split(',')) {
+          const parts = combo.split('+');
+          const keyCode = parts.pop();
+          const modifiers = parts.map((m) => m.toLowerCase());
+          w.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+          w.webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+          w.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+          await wait(900);
+        }
+      }
+
       // Optional DOM-level step for interactions no menu command covers.
       const jsArg = process.argv.find((a) => a.startsWith('--smoke-js='));
       if (jsArg) {
@@ -149,82 +166,54 @@ async function runSmoke(w) {
   });
 }
 
+/**
+ * The window is frameless, so this menu is never drawn — but setting it is what
+ * registers the keyboard accelerators. The in-app menu renders the same tree.
+ */
 function buildMenu() {
-  const template = [
+  const groups = menuFor(process.platform).map((g) => ({
+    label: g.label,
+    submenu: g.items.map((it) => {
+      if (it.sep) return { type: 'separator' };
+      if (it.role) return { role: it.role, label: it.label, ...(it.accel ? { accelerator: it.accel } : {}) };
+      return {
+        label: it.label,
+        ...(it.accel ? { accelerator: it.accel } : {}),
+        click: () => send(it.id),
+      };
+    }),
+  }));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(isMac ? [{ role: 'appMenu' }] : []),
-    {
-      label: 'File',
-      submenu: [
-        { label: 'New Connection…', accelerator: 'CmdOrCtrl+N', click: () => send('connection:new') },
-        { label: 'Manage Connections…', accelerator: 'CmdOrCtrl+Shift+O', click: () => send('connection:manage') },
-        { label: 'Switch Connection…', accelerator: 'CmdOrCtrl+K', click: () => send('connection:switch') },
-        { label: 'New Query Tab', accelerator: 'CmdOrCtrl+T', click: () => send('tab:new') },
-        { type: 'separator' },
-        { label: 'Open SQL File…', accelerator: 'CmdOrCtrl+O', click: () => send('file:open') },
-        { label: 'Save SQL As…', accelerator: 'CmdOrCtrl+S', click: () => send('file:save') },
-        { type: 'separator' },
-        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => send('tab:close') },
-        isMac ? { role: 'close' } : { role: 'quit' },
-      ],
-    },
-    { role: 'editMenu' },
-    {
-      label: 'Query',
-      submenu: [
-        { label: 'Run Current Statement', accelerator: 'CmdOrCtrl+Return', click: () => send('query:run') },
-        { label: 'Run Whole Script', accelerator: 'CmdOrCtrl+Shift+Return', click: () => send('query:runAll') },
-        { label: 'Cancel Running Query', accelerator: 'CmdOrCtrl+.', click: () => send('query:cancel') },
-        { type: 'separator' },
-        { label: 'Explain', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('perf:explain') },
-        { label: 'Explain Analyze', accelerator: 'CmdOrCtrl+Alt+E', click: () => send('perf:explainAnalyze') },
-        { label: 'Benchmark Statements…', accelerator: 'CmdOrCtrl+Shift+B', click: () => send('perf:benchmark') },
-        { type: 'separator' },
-        { label: 'Commit Grid Changes', accelerator: 'CmdOrCtrl+Shift+S', click: () => send('grid:commit') },
-        { label: 'Discard Grid Changes', click: () => send('grid:discard') },
-        { type: 'separator' },
-        { label: 'Add Row', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('grid:addRow') },
-        { label: 'Delete Selected Rows', accelerator: 'CmdOrCtrl+Backspace', click: () => send('grid:deleteRow') },
-        { type: 'separator' },
-        { label: 'Filter Results', accelerator: 'CmdOrCtrl+Shift+F', click: () => send('grid:filter') },
-        { label: 'Clear Filters', click: () => send('grid:clearFilters') },
-        { type: 'separator' },
-        { label: 'Export Result as CSV…', click: () => send('result:csv') },
-      ],
-    },
-    {
-      label: 'Go',
-      submenu: [
-        { label: 'Quick Open Table…', accelerator: 'CmdOrCtrl+P', click: () => send('palette:tables') },
-        { label: 'Query History…', accelerator: 'CmdOrCtrl+H', click: () => send('history:open') },
-        { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+P', click: () => send('palette:commands') },
-        { label: 'Focus Editor', accelerator: 'CmdOrCtrl+E', click: () => send('focus:editor') },
-        { label: 'Refresh Schema', accelerator: 'CmdOrCtrl+R', click: () => send('schema:refresh') },
-        { type: 'separator' },
-        { label: 'Next Tab', accelerator: 'Ctrl+Tab', click: () => send('tab:next') },
-        { label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: () => send('tab:prev') },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
-        { type: 'separator' }, { role: 'togglefullscreen' },
-      ],
-    },
+    ...groups,
     { role: 'windowMenu' },
-    {
-      role: 'help',
-      submenu: [
-        { label: "What's New", click: () => send('help:whatsnew') },
-        { label: 'Version History', click: () => send('help:changelog') },
-        { type: 'separator' },
-        { label: `About ${pkg.name.charAt(0).toUpperCase()}${pkg.name.slice(1)}`, click: () => send('help:about') },
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  ]));
+}
+
+const ROLES = new Set(roleNames());
+
+/** The in-app menu asks for roles the renderer cannot perform itself. */
+function performRole(role) {
+  if (!ROLES.has(role) || !win) return false;
+  const wc = win.webContents;
+  switch (role) {
+    case 'quit': app.quit(); break;
+    case 'close': win.close(); break;
+    case 'reload': wc.reload(); break;
+    case 'toggleDevTools': wc.toggleDevTools(); break;
+    case 'resetZoom': wc.setZoomLevel(0); break;
+    case 'zoomIn': wc.setZoomLevel(Math.min(9, wc.getZoomLevel() + 0.5)); break;
+    case 'zoomOut': wc.setZoomLevel(Math.max(-8, wc.getZoomLevel() - 0.5)); break;
+    case 'togglefullscreen': win.setFullScreen(!win.isFullScreen()); break;
+    case 'undo': wc.undo(); break;
+    case 'redo': wc.redo(); break;
+    case 'cut': wc.cut(); break;
+    case 'copy': wc.copy(); break;
+    case 'paste': wc.paste(); break;
+    case 'selectAll': wc.selectAll(); break;
+    default: return false;
+  }
+  return true;
 }
 
 /* ---------------------------- IPC ---------------------------- */
@@ -303,6 +292,8 @@ handle('window:close', () => { if (win) win.close(); return true; });
 handle('window:state', () => (win ? {
   maximized: win.isMaximized(), fullScreen: win.isFullScreen(), focused: win.isFocused(),
 } : null));
+
+handle('app:role', (role) => performRole(role));
 
 handle('app:info', () => ({
   name: pkg.name,

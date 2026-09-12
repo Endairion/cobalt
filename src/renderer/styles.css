@@ -952,3 +952,24 @@ tr.best .bar-fill { background: var(--green); }
 }
 .ctx-item.disabled { opacity: .42; cursor: default; }
 .ctx-item.disabled:hover { background: none; }
+
+/* ----------------------------- app menu ----------------------------- */
+
+.app-menu-btn {
+  -webkit-app-region: no-drag;
+  width: 34px; flex: none;
+  display: grid; place-items: center;
+  border: 0; background: none; color: var(--text-dim);
+  cursor: pointer; padding: 0;
+  border-right: 1px solid var(--border);
+}
+.app-menu-btn svg { width: 14px; height: 14px; }
+.app-menu-btn svg path {
+  fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round;
+}
+.app-menu-btn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
+.ctx-item.has-sub { padding-right: 8px; }
+.ctx-item .ctx-arrow { margin-left: auto; color: var(--text-faint); font-size: 14px; line-height: 1; }
+.ctx-item.has-sub .ctx-sub { margin-left: 0; }
+.ctx-item.open { background: var(--accent-soft); }

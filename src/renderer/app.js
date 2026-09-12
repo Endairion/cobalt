@@ -6,6 +6,7 @@ import * as perf from './perf.js';
 import { isReadOnlyStatement } from '../shared/sqlkind.js';
 import * as history from './history.js';
 import { showMenu } from './menu.js';
+import * as appmenu from './appmenu.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -34,6 +35,11 @@ const el = {
   btnCancel: $('btn-cancel'),
   btnNewConn: $('btn-new-connection'),
   btnConn: $('btn-conn'),
+  btnExplain: $('btn-explain'),
+  btnBenchmark: $('btn-benchmark'),
+  btnHistory: $('btn-history'),
+  btnMore: $('btn-more'),
+  appMenu: $('app-menu'),
 };
 
 /* ------------------------------ state ------------------------------ */
@@ -1335,6 +1341,17 @@ el.btnRun.addEventListener('click', () => runScript(false));
 el.btnRunAll.addEventListener('click', () => runScript(true));
 el.btnCancel.addEventListener('click', cancelQuery);
 el.btnNewConn.addEventListener('click', () => openConnectionDialog(null));
+el.btnExplain.addEventListener('click', () => runExplain(false));
+el.btnBenchmark.addEventListener('click', () => runBenchmark());
+el.btnHistory.addEventListener('click', () => history.openHistory());
+el.btnMore.addEventListener('click', () => appmenu.openMenuGroup('Query', el.btnMore));
+
+appmenu.wire({
+  platform: () => api.platform,
+  command: (id) => menuCommand(id),
+  role: (name) => api.app.role(name).catch(() => {}),
+});
+el.appMenu.addEventListener('click', () => appmenu.openAppMenu(el.appMenu));
 
 /* ------------------------ connection manager ------------------------ */
 
@@ -1847,6 +1864,7 @@ function initWindowChrome() {
 /* ------------------------------- menu ------------------------------- */
 
 function menuCommand(cmd) {
+  window.__cobaltLastCommand = cmd;
   const tab = activeTab();
   switch (cmd) {
     case 'help:about': about.openAbout(); break;

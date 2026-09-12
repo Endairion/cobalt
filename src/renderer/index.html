@@ -34,6 +34,11 @@
 
     <main class="main">
       <div class="titlebar" id="titlebar">
+        <button class="app-menu-btn" id="app-menu" title="Menu">
+          <svg viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M2 4h10M2 7h10M2 10h10" />
+          </svg>
+        </button>
         <div class="tabstrip" id="tabstrip"></div>
         <div class="win-controls" id="win-controls">
           <button class="win-btn" id="win-min" title="Minimise" aria-label="Minimise">
@@ -60,8 +65,13 @@
             <button class="btn primary" id="btn-run" title="Run current statement (Ctrl+Enter)">Run</button>
             <button class="btn" id="btn-run-all" title="Run whole script (Ctrl+Shift+Enter)">Run all</button>
             <button class="btn danger hidden" id="btn-cancel" title="Cancel (Ctrl+.)">Cancel</button>
+            <span class="tb-sep"></span>
+            <button class="btn ghost" id="btn-explain" title="Explain the current statement (Ctrl+Shift+E)">Explain</button>
+            <button class="btn ghost" id="btn-benchmark" title="Benchmark the statements in this tab (Ctrl+Shift+B)">Benchmark</button>
+            <button class="btn ghost" id="btn-history" title="Query history (Ctrl+H)">History</button>
             <span class="spacer"></span>
             <span class="hint" id="editor-hint"></span>
+            <button class="btn ghost" id="btn-more" title="More actions">&#8943;</button>
           </div>
           <div class="editor-host" id="editor-host"></div>
         </div>

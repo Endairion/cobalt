@@ -1,6 +1,6 @@
 {
   "name": "cobalt",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Cobalt - a fast PostgreSQL editor",
   "main": "src/main/main.js",
   "scripts": {
@@ -9,7 +9,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "changelog": "node scripts/gen-changelog.js",
-    "test": "node test/version.test.js && node test/store.test.js && node test/history.test.js && node test/db.test.js && node test/filter.test.js && node test/perf.test.js && node test/paging.test.js && node test/fk.test.js"
+    "test": "node test/commands.test.js && node test/version.test.js && node test/store.test.js && node test/history.test.js && node test/db.test.js && node test/filter.test.js && node test/perf.test.js && node test/paging.test.js && node test/fk.test.js"
   },
   "license": "MIT",
   "dependencies": {

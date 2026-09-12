@@ -121,6 +121,13 @@ versions behind it and the server you are on. The first launch of a build you ha
 seen opens What's New once, listing only the releases after the version you were on.
 Releases are tagged in git (`v0.1.0` …).
 
+**The menu.** The window is frameless, so there is no OS menu bar — the button at the
+left of the tab strip opens the same menu, with shortcuts shown beside each item.
+Explain, Benchmark and History also have toolbar buttons. It is all defined once in
+`src/shared/commands.js`: the main process builds the Electron menu from it (that is
+what registers the accelerators) and the app renders the same tree, so a menu item
+cannot drift out of sync with what the code handles.
+
 ## Keys
 
 | | |
@@ -157,6 +164,7 @@ docker run -d --name cobalt-test-pg -e POSTGRES_PASSWORD=cobalt -e POSTGRES_USER
   -e POSTGRES_DB=cobalt -p 15432:5432 postgres:16-alpine
 docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
+node test/commands.test.js # 10 checks: every menu item is wired, no dead entries
 node test/version.test.js  # 10 checks: changelog data, CHANGELOG.md sync, git tags
 node test/store.test.js    # 12 checks: ordering, duplication, password handling
 node test/history.test.js  # 16 checks: collapsing, search, trimming, torn writes
@@ -174,6 +182,7 @@ node test/perfui.js       # benchmark and plan panels
 node test/pagingui.js     # scroll-to-load, server sorting, count all
 node test/historyui.js    # recording, search, reuse
 node test/fkui.js         # travelling a key, referenced-by
+node test/menuui.js       # the in-app menu, toolbar buttons, real key presses
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -198,6 +207,7 @@ node test/inspect.js "query:run" "document.querySelectorAll('.grow').length"
 ```
 src/shared/
   changelog.js  release history as data; CHANGELOG.md is generated from it
+  commands.js   the menu tree, shared by the native menu and the in-app one
   stats.js      quantiles and the benchmark verdict rule
   sqlkind.js    whether a statement only reads
 src/main/
@@ -212,7 +222,8 @@ src/renderer/
   about.js      About window and version history
   perf.js       benchmark comparison and EXPLAIN plan tree
   history.js    query history browser
-  menu.js       shared floating context menu
+  menu.js       shared floating context menu, with submenus
+  appmenu.js    the in-app menu bar
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   filter.js     filter expression parser
