@@ -973,3 +973,26 @@ tr.best .bar-fill { background: var(--green); }
 .ctx-item .ctx-arrow { margin-left: auto; color: var(--text-faint); font-size: 14px; line-height: 1; }
 .ctx-item.has-sub .ctx-sub { margin-left: 0; }
 .ctx-item.open { background: var(--accent-soft); }
+
+/* --------------------------- browse mode --------------------------- */
+
+/* A browse tab has nothing to edit, so the grid takes the whole pane.
+   The hidden panes leave the grid entirely, so there is one track left to fill
+   rather than three -- sizing for three would drop the results into a 0px row. */
+.workarea.data-mode { grid-template-rows: 1fr; }
+.workarea.data-mode .editor-pane,
+.workarea.data-mode .pane-resizer { display: none; }
+
+.data-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.dh-table { font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
+.dh-conn { color: var(--text-faint); font-size: 11.5px; }
+
+.tree-row.rel.browsing { background: var(--accent-soft); }
+.tree-row.rel.browsing .name { color: var(--text); }
+.tree-row .twisty { cursor: pointer; border-radius: 3px; }
+.tree-row .twisty:hover { background: rgba(255,255,255,.1); color: var(--text); }
