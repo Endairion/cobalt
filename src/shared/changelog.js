@@ -13,6 +13,17 @@
 
 const releases = [
   {
+    version: '0.11.2',
+    date: '2026-09-12',
+    title: 'Typing in a filter box stays there',
+    summary: 'Filter keystrokes were reaching the grid and editing a cell.',
+    changes: [
+      { type: 'fixed', text: 'Typing in a filter box opened a cell editor on whatever the grid cursor was on, and pressing Enter to apply a filter did the same. The filter inputs sit inside the grid element, so their keystrokes bubbled to the grid handler, which starts editing on any printable key. The grid now ignores keys that came from an input.' },
+      { type: 'fixed', text: 'Reading a cell beyond the last row crashed on an empty result, where row 0 exists on screen but addresses nothing. Row lookup returns a "no such row" result now and every caller handles it.' },
+      { type: 'changed', text: 'The cell cursor dims while a filter box has focus, so it no longer looks like the grid is still taking input.' },
+    ],
+  },
+  {
     version: '0.11.1',
     date: '2026-09-12',
     title: 'Nothing is written until you say so',

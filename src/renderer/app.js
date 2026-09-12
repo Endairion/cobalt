@@ -2079,6 +2079,10 @@ window.__cobaltGridRows = () => {
 window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
 window.__cobaltMenu = (cmd) => menuCommand(cmd);
+window.__cobaltCursor = () => {
+  const t = activeTab();
+  return t && t.grid ? { ...t.grid.cursor } : { row: -1, col: -1 };
+};
 window.__cobaltDirty = () => {
   const t = activeTab();
   return t && t.grid ? t.grid.dirtyCount() : 0;

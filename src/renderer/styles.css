@@ -1017,3 +1017,11 @@ tr.best .bar-fill { background: var(--green); }
   color: var(--text-faint); font-family: var(--ui);
   font-size: 9.5px; letter-spacing: .3px; padding-right: 2px;
 }
+
+/* While a filter box has focus the grid is not taking input, so the cell
+   cursor should stop looking like it is. */
+.grid-filter:focus-within ~ .grid-body .gc.selected {
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.05);
+}
+.grid-filter:focus-within ~ .grid-body .grow.cursor-row { background: transparent; }
