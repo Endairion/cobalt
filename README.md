@@ -82,6 +82,12 @@ everywhere else:
 Filters across columns are ANDed. `Enter` applies, `Esc` clears the box then closes the
 row, and the toolbar shows how many are active with a Clear button.
 
+**Browsing.** Click a table in the sidebar and its rows appear straight away — no query
+to write, and the editor steps aside so the grid gets the whole pane. The arrow beside a
+table expands its columns instead. One browse tab per connection follows your clicks;
+double-click a table for a separate query tab. "Open as query" turns a browse tab into a
+normal one, statement and all.
+
 **Paging and sorting.** Results page in as you scroll rather than stopping at a cap,
 and clicking a header sorts on the server, so the top row is the maximum in the table
 and not just in what was loaded. Whatever you sort by, the unique key is appended as a
@@ -188,6 +194,7 @@ node test/pagingui.js     # scroll-to-load, server sorting, count all
 node test/historyui.js    # recording, search, reuse
 node test/fkui.js         # travelling a key, referenced-by
 node test/menuui.js       # the in-app menu, toolbar buttons, real key presses
+node test/browseui.js     # click-to-browse, tab reuse, open as query
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what

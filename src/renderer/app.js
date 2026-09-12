@@ -39,6 +39,7 @@ const el = {
   btnBenchmark: $('btn-benchmark'),
   btnHistory: $('btn-history'),
   btnMore: $('btn-more'),
+  dataHead: $('data-head'),
   appMenu: $('app-menu'),
 };
 
@@ -151,6 +152,7 @@ function selectTab(id) {
   renderResults();
   updateToolbar();
   renderStatus();
+  applyWorkareaMode();
 }
 
 async function closeTab(id) {
@@ -186,6 +188,7 @@ async function closeTab(id) {
   renderTabs();
   renderResults();
   updateToolbar();
+  applyWorkareaMode();
   saveWorkspace();
 }
 
@@ -410,8 +413,9 @@ function renderSidebar() {
         shownTotal++;
         const ckey = `rel:${sch.name}.${r.name}`;
         const copen = live.expanded.has(ckey);
-        out.push(`<div class="tree-row rel" data-conn-scope="${esc(live.id)}" data-rel="${esc(sch.name)}|${esc(r.name)}" data-toggle="${esc(ckey)}" title="${esc(sch.name)}.${esc(r.name)}">
-          <span class="twisty">${copen ? '&#9662;' : '&#9656;'}</span>
+        const isOpen = tabForTable(live.id, sch.name, r.name);
+        out.push(`<div class="tree-row rel${isOpen ? ' browsing' : ''}" data-conn-scope="${esc(live.id)}" data-rel="${esc(sch.name)}|${esc(r.name)}" title="${esc(sch.name)}.${esc(r.name)} — click to browse, arrow for columns">
+          <span class="twisty" data-toggle="${esc(ckey)}" data-conn-scope="${esc(live.id)}">${copen ? '&#9662;' : '&#9656;'}</span>
           <span class="kind ${r.kind}">${kindLabel(r.kind)}</span>
           <span class="name">${esc(r.name)}</span>
           <span class="meta">${r.estRows > 0 ? approx(r.estRows) : ''}</span>
@@ -476,16 +480,28 @@ el.tree.addEventListener('click', async (e) => {
     return;
   }
 
-  // A schema or relation row inside one connection's subtree.
-  const row = e.target.closest('[data-toggle]');
-  if (!row) return;
-  const conn = state.conns.get(row.dataset.connScope);
-  if (!conn) return;
-  if (conn.id !== state.activeConnId) focusConnection(conn.id);
-  const key = row.dataset.toggle;
-  if (conn.expanded.has(key)) conn.expanded.delete(key);
-  else conn.expanded.add(key);
-  renderSidebar();
+  // The twisty folds a schema or table open; clicking anywhere else on a table
+  // row browses it, which is the common case.
+  const toggle = e.target.closest('[data-toggle]');
+  if (toggle) {
+    const conn = state.conns.get(toggle.dataset.connScope);
+    if (!conn) return;
+    if (conn.id !== state.activeConnId) focusConnection(conn.id);
+    const key = toggle.dataset.toggle;
+    if (conn.expanded.has(key)) conn.expanded.delete(key);
+    else conn.expanded.add(key);
+    renderSidebar();
+    return;
+  }
+
+  const relRow = e.target.closest('[data-rel]');
+  if (relRow) {
+    const conn = state.conns.get(relRow.dataset.connScope);
+    if (!conn) return;
+    if (conn.id !== state.activeConnId) focusConnection(conn.id);
+    const [schema, name] = relRow.dataset.rel.split('|');
+    browseTable(schema, name, conn.id);
+  }
 });
 
 el.tree.addEventListener('dblclick', (e) => {
@@ -495,7 +511,7 @@ el.tree.addEventListener('dblclick', (e) => {
   if (!conn) return;
   if (conn.id !== state.activeConnId) focusConnection(conn.id);
   const [schema, name] = row.dataset.rel.split('|');
-  openTableTab(schema, name, conn.id);
+  openTableTab(schema, name, conn.id);      // a separate, persistent query tab
 });
 
 el.tree.addEventListener('contextmenu', async (e) => {
@@ -948,6 +964,83 @@ function recordHistory(tab, { sql, durationMs, rowCount, error, kind = 'query' }
     kind,
   }).catch(() => { /* history must never interrupt a query */ });
 }
+
+/* ---------------------------- browsing ---------------------------- */
+
+/** The browse tab currently showing this table, if any. */
+function tabForTable(connId, schema, table) {
+  return state.tabs.find((t) => t.kind === 'data' && t.connId === connId
+    && t.source && t.source.schema === schema && t.source.table === table) || null;
+}
+
+/** One browse tab per connection, which follows what you click. */
+function browseTabFor(connId) {
+  return state.tabs.find((t) => t.kind === 'data' && t.connId === connId) || null;
+}
+
+/**
+ * Show a table's rows straight away, with no query in the way.
+ *
+ * The statement still exists — it is what paging, sorting and filtering build
+ * on, and "Open as query" hands it to a normal tab — it just does not need to
+ * occupy the screen to look at a table.
+ */
+function browseTable(schema, table, connId) {
+  const sql = `select *\nfrom ${qrel(schema, table)};`;
+  const existing = browseTabFor(connId);
+  const tab = existing || newTab({ connId, kind: 'data', title: table, sql });
+
+  tab.kind = 'data';
+  tab.source = { schema, table };
+  tab.title = table;
+  if (existing) {
+    selectTab(existing.id);
+    editor.replaceAll(sql, sql.length);
+  }
+  tab.pageState = newPageState(sql);
+  tab.results = [];
+  tab.activeResult = 0;
+
+  renderTabs();
+  renderSidebar();
+  applyWorkareaMode();
+  loadPage(tab);
+}
+
+/** Hide the editor for a browse tab; it has nothing to edit. */
+function applyWorkareaMode() {
+  const tab = activeTab();
+  const browsing = !!(tab && tab.kind === 'data');
+  el.workarea.classList.toggle('data-mode', browsing);
+  el.dataHead.hidden = !browsing;
+  if (!browsing) return;
+
+  const conn = tab.connId ? state.conns.get(tab.connId) : null;
+  el.dataHead.innerHTML = `
+    <span class="dh-table">${esc(tab.source ? `${tab.source.schema}.${tab.source.table}` : tab.title)}</span>
+    ${conn ? `<span class="dh-conn">${esc(conn.name)} · ${esc(conn.database)}</span>` : ''}
+    <span class="spacer"></span>
+    <button class="btn small ghost" data-data="refresh" title="Reload (Ctrl+Enter)">Refresh</button>
+    <button class="btn small ghost" data-data="query">Open as query</button>`;
+}
+
+el.dataHead.addEventListener('click', (e) => {
+  const act = e.target.closest('[data-data]');
+  if (!act) return;
+  const tab = activeTab();
+  if (!tab) return;
+  if (act.dataset.data === 'refresh') { loadPage(tab); return; }
+  if (act.dataset.data === 'query') {
+    // Turn this into an ordinary query tab, statement and all.
+    tab.kind = 'query';
+    tab.title = `${tab.source ? tab.source.table : tab.title} query`;
+    tab.source = null;
+    renderTabs();
+    renderSidebar();
+    applyWorkareaMode();
+    editor.focus();
+  }
+});
 
 /* ------------------------------ paging ------------------------------ */
 

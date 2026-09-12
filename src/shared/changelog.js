@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.11.0',
+    date: '2026-09-12',
+    title: 'Browse a table by clicking it',
+    summary: 'No query to write, and none in the way.',
+    changes: [
+      { type: 'added', text: 'Clicking a table in the sidebar shows its rows immediately, with the editor out of the way and the grid taking the whole pane. Filtering, sorting, paging and editing all work exactly as they do on a query result.' },
+      { type: 'added', text: 'A header names the table and the connection, with Refresh and "Open as query", which hands the statement to a normal tab so nothing is hidden from you - only moved aside.' },
+      { type: 'changed', text: 'One browse tab per connection follows what you click rather than opening a tab per table. Double-clicking still opens a separate, persistent query tab, and the sidebar highlights whichever table is being browsed.' },
+      { type: 'changed', text: 'The arrow beside a table expands its columns; clicking the name browses it. Previously the whole row toggled columns and only a double-click opened anything.' },
+    ],
+  },
+  {
     version: '0.10.1',
     date: '2026-09-12',
     title: 'Stored passwords',
