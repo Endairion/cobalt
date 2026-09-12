@@ -55,6 +55,12 @@ contextBridge.exposeInMainWorld('cobalt', {
     info: () => call('app:info'),
     unseenReleases: () => call('app:unseenReleases'),
   },
+  history: {
+    add: (entry) => call('history:add', entry),
+    search: (opts) => call('history:search', opts),
+    stats: () => call('history:stats'),
+    clear: () => call('history:clear'),
+  },
   workspace: {
     get: () => call('ws:get'),
     set: (ws) => call('ws:set', ws),

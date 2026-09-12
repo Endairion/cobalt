@@ -4,6 +4,7 @@ import * as connections from './connections.js';
 import * as about from './about.js';
 import * as perf from './perf.js';
 import { isReadOnlyStatement } from '../shared/sqlkind.js';
+import * as history from './history.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -561,7 +562,17 @@ async function runScript(all) {
     tab.filterBaseSql = null;
     tab.running = true;
     updateToolbar();
-    try { await loadPage(tab); } finally { tab.running = false; updateToolbar(); renderTabs(); }
+    const started = Date.now();
+    try {
+      await loadPage(tab);
+      const res = tab.results[0] || {};
+      recordHistory(tab, {
+        sql: tab.pageState.baseSql,
+        durationMs: Date.now() - started,
+        rowCount: res.error ? null : (res.rows ? res.rows.length : null),
+        error: res.error ? res.error.message : null,
+      });
+    } finally { tab.running = false; updateToolbar(); renderTabs(); }
     return;
   }
 
@@ -581,6 +592,14 @@ async function runScript(all) {
       ? results.findIndex((r) => r.error)
       : 0;
     renderResults();
+    for (const r of results) {
+      recordHistory(tab, {
+        sql: r.sql,
+        durationMs: r.elapsedMs,
+        rowCount: r.error ? null : (r.rows && r.rows.length ? r.rows.length : r.rowCount),
+        error: r.error ? r.error.message : null,
+      });
+    }
     const failed = results.find((r) => r.error);
     if (failed) {
       const pos = failed.error.position;
@@ -755,6 +774,47 @@ async function runExplain(analyze) {
     tab.running = false;
     updateToolbar();
   }
+}
+
+/* ----------------------------- history ----------------------------- */
+
+history.wire({
+  search: (opts) => api.history.search(opts),
+  stats: () => api.history.stats(),
+  clear: () => api.history.clear(),
+  confirm: (opts) => api.ui.confirm(opts),
+  showOverlay: (node) => showOverlay(node),
+  activeConnection: () => {
+    const tab = activeTab();
+    const conn = tab && tab.connId ? state.conns.get(tab.connId) : state.conns.get(state.activeConnId);
+    return conn || null;
+  },
+  insertIntoEditor: (sql) => {
+    const tab = activeTab();
+    if (!tab) return;
+    editor.replaceAll(sql, sql.length);
+    editor.focus();
+    toast('Loaded from history.');
+  },
+  openInNewTab: (sql) => newTab({ sql, title: undefined }),
+});
+
+/**
+ * Record one execution. Called for the action, not for each page fetched —
+ * scrolling a result should not fill the history with the same statement.
+ */
+function recordHistory(tab, { sql, durationMs, rowCount, error, kind = 'query' }) {
+  const conn = tab && tab.connId ? state.conns.get(tab.connId) : null;
+  api.history.add({
+    sql,
+    connectionId: conn ? conn.savedId : null,
+    connectionName: conn ? conn.name : null,
+    database: conn ? conn.database : null,
+    durationMs,
+    rowCount,
+    error: error || null,
+    kind,
+  }).catch(() => { /* history must never interrupt a query */ });
 }
 
 /* ------------------------------ paging ------------------------------ */
@@ -1504,6 +1564,7 @@ function openCommandPalette() {
     { label: 'Explain analyze', run: () => runExplain(true) },
     { label: 'Export result as CSV…', run: exportCsv },
     { label: 'Commit grid changes', run: commitGrid },
+    { label: 'Query history…', sub: 'Ctrl+H', run: () => history.openHistory() },
     { label: 'Open SQL file…', run: openFile },
     { label: 'Save SQL as…', run: saveFile },
     { label: 'Copy result as TSV', run: () => {
@@ -1655,7 +1716,7 @@ function initWindowChrome() {
 
 /* ------------------------------- menu ------------------------------- */
 
-api.ui.onMenu((cmd) => {
+function menuCommand(cmd) {
   const tab = activeTab();
   switch (cmd) {
     case 'help:about': about.openAbout(); break;
@@ -1685,6 +1746,7 @@ api.ui.onMenu((cmd) => {
       if (tab && tab.grid) { tab.grid.clearFilters(); renderGridToolbar(); }
       break;
     case 'result:csv': exportCsv(); break;
+    case 'history:open': history.openHistory(); break;
     case 'palette:tables': openTablePalette(); break;
     case 'palette:commands': openCommandPalette(); break;
     case 'focus:editor': editor.focus(); break;
@@ -1692,7 +1754,9 @@ api.ui.onMenu((cmd) => {
     case 'file:open': openFile(); break;
     case 'file:save': saveFile(); break;
   }
-});
+}
+
+api.ui.onMenu(menuCommand);
 
 /* ------------------------------- boot ------------------------------- */
 
@@ -1743,6 +1807,9 @@ window.__cobaltGridRows = () => {
   const t = activeTab();
   return t && t.grid ? t.grid.rows.length : 0;
 };
+window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
+window.__cobaltGetSql = () => editor.getValue();
+window.__cobaltMenu = (cmd) => menuCommand(cmd);
 window.__cobaltCell = (row, col) => {
   const t = activeTab();
   return t && t.grid ? t.grid.valueAt(row, col) : null;

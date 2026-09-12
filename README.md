@@ -77,6 +77,20 @@ everywhere else:
 Filters across columns are ANDed. `Enter` applies, `Esc` clears the box then closes the
 row, and the toolbar shows how many are active with a Clear button.
 
+**Paging and sorting.** Results page in as you scroll rather than stopping at a cap,
+and clicking a header sorts on the server, so the top row is the maximum in the table
+and not just in what was loaded. Whatever you sort by, the unique key is appended as a
+tiebreaker — without a total order, paging silently drops and repeats rows wherever the
+sort ties. With that in place, keyset paging (`where (a, b) > ($1, $2)`) is used when
+every sort column is non-nullable and sorted the same way, so deep pages stay fast;
+anything else falls back to OFFSET and the toolbar says which is in use. A count-all
+button runs `COUNT(*)` over the whole filtered result on request.
+
+**Query history.** `Ctrl+H`. Every run is recorded with its connection, duration, row
+count and any error, searchable across statements and connection names. Consecutive
+repeats collapse into one row with a run count, showing the fastest of those runs.
+Stored as JSON Lines in `userData/cobalt-history.jsonl`, trimmed to 5,000 entries.
+
 **Performance tools.** `Ctrl+Shift+B` benchmarks the statements in the tab (or the
 selection) against each other: median, min, p95, max and spread per variant, ranked,
 with the interquartile range drawn on each bar. Runs are interleaved rather than
@@ -120,6 +134,7 @@ Releases are tagged in git (`v0.1.0` …).
 | `Ctrl+R` | Refresh schema |
 | `Ctrl+O` / `Ctrl+S` | Open / save .sql |
 | `Ctrl+Shift+F` | Toggle the filter row |
+| `Ctrl+H` | Query history |
 | `Ctrl+Shift+B` | Benchmark statements |
 | `Ctrl+Shift+E` / `Ctrl+Alt+E` | Explain / Explain analyze |
 | `Ctrl+Shift+S` | Commit grid changes |
@@ -139,6 +154,8 @@ docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
 node test/version.test.js  # 10 checks: changelog data, CHANGELOG.md sync, git tags
 node test/store.test.js    # 12 checks: ordering, duplication, password handling
+node test/history.test.js  # 16 checks: collapsing, search, trimming, torn writes
+node test/paging.test.js   # 20 checks: page stability, keyset vs offset, counting
 node test/db.test.js       # 25 checks: splitting, editability, commits, sessions, cancel
 node test/filter.test.js  # 29 checks: parsing, SQL construction, live filtering
 node test/perf.test.js    # 21 checks: timing stats, benchmark safety, plans
@@ -148,6 +165,8 @@ node test/about.js        # version badge, About, What's New on upgrade
 node test/tabs.js         # tab naming and the close-button gesture
 node test/chrome.js       # frameless window controls, grid header geometry
 node test/perfui.js       # benchmark and plan panels
+node test/pagingui.js     # scroll-to-load, server sorting, count all
+node test/historyui.js    # recording, search, reuse
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what
@@ -173,8 +192,10 @@ node test/inspect.js "query:run" "document.querySelectorAll('.grow').length"
 src/shared/
   changelog.js  release history as data; CHANGELOG.md is generated from it
   stats.js      quantiles and the benchmark verdict rule
+  sqlkind.js    whether a statement only reads
 src/main/
   main.js       window, menu, IPC surface, smoke mode
+  history.js    append-only query history
   db.js         pools, per-tab sessions, result metadata, transactional commits
   sqlsplit.js   statement splitter (shared with the renderer)
   store.js      saved connections + workspace, safeStorage encryption
@@ -183,6 +204,7 @@ src/renderer/
   connections.js  connection manager, row menu, tab connection picker
   about.js      About window and version history
   perf.js       benchmark comparison and EXPLAIN plan tree
+  history.js    query history browser
   editor.js     CodeMirror 6 setup, schema-aware autocomplete
   grid.js       virtualized editable grid + filter row
   filter.js     filter expression parser
@@ -190,6 +212,5 @@ src/renderer/
 
 ## Not built yet
 
-Server-side paging (results are capped at 10k rows), OR between filters,
-query history, saved snippets, ERD, `EXPLAIN` visualization, other engines. The driver
+OR between filters, starred/saved snippets, saved snippets, ERD, `EXPLAIN` visualization, other engines. The driver
 seam is `src/main/db.js`; the renderer never speaks Postgres directly.

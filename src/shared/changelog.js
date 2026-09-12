@@ -13,6 +13,19 @@
 
 const releases = [
   {
+    version: '0.8.0',
+    date: '2026-09-12',
+    title: 'Query history',
+    summary: 'Every statement you run is recorded and searchable.',
+    changes: [
+      { type: 'added', text: 'Query history (Ctrl+H): every run is recorded with its connection, database, duration, row count and any error. Search across statements and connection names, filter to the current connection or to failures, and put a statement back in the editor or open it in a new tab.' },
+      { type: 'added', text: 'Consecutive runs of the same statement collapse into one row with a run count, so iterating on a query with Ctrl+Enter does not bury everything else. The fastest of those runs is the time shown.' },
+      { type: 'added', text: 'History is stored as JSON Lines and appended one line at a time, so recording costs nothing on the query path, and it is trimmed to the newest 5,000 entries at startup. A half-written line is skipped rather than losing the file.' },
+      { type: 'changed', text: 'Test runs no longer interrupt you: the window opens on a second display when there is one, stays out of the taskbar, and never takes focus.' },
+      { type: 'fixed', text: 'The history panel collapsed into a single column because the generic modal body rule outranked its own grid. It no longer borrows that class, and a test asserts the two panes really sit side by side.' },
+    ],
+  },
+  {
     version: '0.7.0',
     date: '2026-09-12',
     title: 'Server-side paging and sorting',
