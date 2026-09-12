@@ -276,14 +276,20 @@ export class ResultGrid {
 
   totalRows() { return this.order.length - 0 + this.inserts.length; }
 
-  /** Logical row at display index: {kind:'row', idx} or {kind:'new', pos}. */
+  /**
+   * Logical row at a display index: {kind:'row', idx}, {kind:'new', pos}, or
+   * {kind:'none'} when the index is past the end — which happens readily on an
+   * empty result, where row 0 exists on screen but addresses nothing.
+   */
   at(display) {
-    if (display < this.order.length) return { kind: 'row', idx: this.order[display] };
-    return { kind: 'new', pos: display - this.order.length };
+    if (display >= 0 && display < this.order.length) return { kind: 'row', idx: this.order[display] };
+    const pos = display - this.order.length;
+    return pos >= 0 && pos < this.inserts.length ? { kind: 'new', pos } : { kind: 'none' };
   }
 
   valueAt(display, col) {
     const ref = this.at(display);
+    if (ref.kind === 'none') return null;
     if (ref.kind === 'new') {
       const v = this.inserts[ref.pos].values.get(col);
       return v === undefined ? null : (v === NULL_TOKEN ? null : v);
@@ -298,6 +304,7 @@ export class ResultGrid {
 
   isEdited(display, col) {
     const ref = this.at(display);
+    if (ref.kind === 'none') return false;
     if (ref.kind === 'new') return this.inserts[ref.pos].values.has(col);
     const e = this.edits.get(ref.idx);
     return !!(e && e.has(col));
@@ -305,6 +312,7 @@ export class ResultGrid {
 
   rowState(display) {
     const ref = this.at(display);
+    if (ref.kind === 'none') return '';
     if (ref.kind === 'new') return 'new';
     if (this.deletes.has(ref.idx)) return 'del';
     if (this.edits.has(ref.idx)) return 'dirty';
@@ -483,6 +491,12 @@ export class ResultGrid {
 
   onKeyDown(e) {
     if (this.editing) return;
+    // The filter inputs and the cell editor live inside the grid element, so
+    // their keystrokes bubble here. Without this, typing in a filter box opens
+    // a cell editor on whatever the cursor was on, and Enter to apply a filter
+    // does the same.
+    const t = e.target;
+    if (t && t !== this.el && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     const { row, col } = this.cursor;
     const mod = e.ctrlKey || e.metaKey;
 
@@ -553,6 +567,7 @@ export class ResultGrid {
       return;
     }
     const ref = this.at(this.cursor.row);
+    if (ref.kind === 'none') return;
     if (ref.kind === 'row' && this.deletes.has(ref.idx)) {
       this.onStatus('Row is marked for deletion.');
       return;
@@ -629,13 +644,14 @@ export class ResultGrid {
 
   originalValue(display, col) {
     const ref = this.at(display);
-    if (ref.kind === 'new') return null;
+    if (ref.kind !== 'row') return null;
     return this.rows[ref.idx][col];
   }
 
   setValue(display, col, value) {
-    this.undoStack.push({ kind: 'cell', display, col, prev: this.stagedAt(display, col) });
     const ref = this.at(display);
+    if (ref.kind === 'none') return;
+    this.undoStack.push({ kind: 'cell', display, col, prev: this.stagedAt(display, col) });
     if (ref.kind === 'new') {
       this.inserts[ref.pos].values.set(col, value);
     } else {
@@ -655,8 +671,9 @@ export class ResultGrid {
   }
 
   clearEdit(display, col) {
-    this.undoStack.push({ kind: 'cell', display, col, prev: this.stagedAt(display, col) });
     const ref = this.at(display);
+    if (ref.kind === 'none') return;
+    this.undoStack.push({ kind: 'cell', display, col, prev: this.stagedAt(display, col) });
     if (ref.kind === 'new') this.inserts[ref.pos].values.delete(col);
     else {
       const e = this.edits.get(ref.idx);
@@ -679,6 +696,7 @@ export class ResultGrid {
     if (!this.editable) { this.onStatus('This result is read-only.'); return; }
     if (!this.totalRows()) return;
     const ref = this.at(this.cursor.row);
+    if (ref.kind === 'none') return;
     if (ref.kind === 'new') {
       this.inserts.splice(ref.pos, 1);
       this.render();
@@ -703,6 +721,7 @@ export class ResultGrid {
   /** The staged value for a cell, or UNSET when nothing is staged there. */
   stagedAt(display, col) {
     const ref = this.at(display);
+    if (ref.kind === 'none') return UNSET;
     if (ref.kind === 'new') {
       const m = this.inserts[ref.pos].values;
       return m.has(col) ? m.get(col) : UNSET;
@@ -714,6 +733,7 @@ export class ResultGrid {
   /** Put a staged value back exactly as it was, UNSET meaning "not staged". */
   applyStaged(display, col, v) {
     const ref = this.at(display);
+    if (ref.kind === 'none') return;
     if (ref.kind === 'new') {
       if (v === UNSET) this.inserts[ref.pos].values.delete(col);
       else this.inserts[ref.pos].values.set(col, v);

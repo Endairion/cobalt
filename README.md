@@ -202,6 +202,7 @@ node test/fkui.js         # travelling a key, referenced-by
 node test/menuui.js       # the in-app menu, toolbar buttons, real key presses
 node test/browseui.js     # click-to-browse, tab reuse, open as query
 node test/safetyui.js     # staged-change bar, undo, filtering writes nothing
+node test/filterfocusui.js # filter focus, and keys staying in the filter box
 ```
 
 `test/realdb.js` points the data layer at a database you already have and reports what

@@ -115,7 +115,7 @@ const HELP = `
   console.log('\nwalking back to children');
 
   const back = await run('fk-referenced.png',
-    'select id, email, full_name from shop.customers limit 50;', ['query:run'], `(async () => {
+    'select c.id, c.email, c.full_name from shop.customers c where exists (select 1 from shop.orders o where o.customer_id = c.id) limit 50;', ['query:run'], `(async () => {
     ${HELP}
     await w(1400);
     const parentId = window.__cobaltCell(0, 0);
