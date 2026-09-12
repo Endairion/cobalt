@@ -41,7 +41,14 @@ inspector, export and import. MySQL has no schemas, so the connected database fi
 slot and the tree keeps its three levels. Everything engine-specific lives in
 `src/main/drivers`; adding another means adding a file there and nothing in the renderer.
 
-**Find in database.** `Ctrl+Shift+G` looks for a value in every text column of every
+**The object browser.** Expanding a table shows its indexes, foreign keys and triggers
+as well as its columns - an index says whether it is the primary key, unique or ordinary
+and how much disk it takes, and hovering shows the definition. Functions and sequences
+hang off the schema in folders. A primary key is listed under Indexes and not again under
+Keys, since it is one thing said twice. The catalogue is read once per connection, the
+first time you expand something.
+
+**Find in database. `Ctrl+Shift+G` looks for a value in every text column of every
 table and says which table and column held it, how many rows matched, and shows an
 example with the match highlighted. Clicking a hit opens that table with the filter
 already applied. Numbers and dates are opt-in (`1` would otherwise match half the
@@ -222,6 +229,8 @@ docker exec -i cobalt-test-pg psql -U cobalt -d cobalt < test/seed.sql
 
 docker run -d --name cobalt-test-mysql -e MYSQL_ROOT_PASSWORD=cobalt -e MYSQL_USER=cobalt \
   -e MYSQL_PASSWORD=cobalt -e MYSQL_DATABASE=cobalt -p 13306:3306 mysql:8
+docker exec cobalt-test-mysql mysql -uroot -pcobalt \
+  -e "set global log_bin_trust_function_creators = 1;"
 docker exec -i cobalt-test-mysql mysql -ucobalt -pcobalt cobalt < test/seed-mysql.sql
 
 node test/commands.test.js # 10 checks: every menu item is wired, no dead entries
@@ -265,6 +274,7 @@ node test/enginesui.js    # the engine picker, MySQL end to end, server activity
 node test/formatui.js     # formatting one statement, a script, and what it leaves alone
 node test/healthui.js     # the health panel on both engines, and what it counts
 node test/searchui.js     # searching, what it reports, and opening a hit
+node test/objectsui.js    # indexes, keys, triggers, functions and sequences in the tree
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 

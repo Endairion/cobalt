@@ -364,6 +364,7 @@ async function loadSchema(connId) {
     const tree = await api.connections.schema(connId);
     conn.tree = tree;
     conn.fks = null;          // re-read alongside the schema
+    conn.objects = null;      // and so does the object catalogue
     if (!conn.expanded.size) {
       const pub = tree.schemas.find((s) => s.name === 'public') || tree.schemas[0];
       if (pub) conn.expanded.add(`schema:${pub.name}`);
@@ -439,6 +440,8 @@ function renderSidebar() {
       </div>`);
       if (!sopen) continue;
 
+      out.push(schemaObjectRows(live, sch.name, needle));
+
       for (const r of relations) {
         shownTotal++;
         const ckey = `rel:${sch.name}.${r.name}`;
@@ -457,6 +460,7 @@ function renderSidebar() {
               <span class="ctype">${esc(c.type)}</span>
             </div>`);
           }
+          out.push(objectRows(live, sch.name, r.name));
         }
       }
     }
@@ -470,6 +474,108 @@ function renderSidebar() {
 }
 
 const kindLabel = (k) => ({ r: 'T', p: 'P', v: 'V', m: 'MV', f: 'F' }[k] || '?');
+
+const bytesShort = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return '';
+  if (v < 1024) return `${v}B`;
+  if (v < 1024 * 1024) return `${Math.round(v / 1024)}kB`;
+  if (v < 1024 * 1024 * 1024) return `${Math.round(v / 1024 / 1024)}MB`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(1)}GB`;
+};
+
+/**
+ * Indexes, keys and triggers under an expanded table.
+ *
+ * The catalogue is fetched once per connection, the first time anything is
+ * expanded, rather than alongside the schema — a database with thousands of
+ * tables should not pay for it on every refresh.
+ */
+function objectRows(live, schema, table) {
+  if (!live.objects) { loadObjects(live.id); return '<div class="tree-row loading sub">reading objects…</div>'; }
+  const t = live.objects.byTable[`${schema}.${table}`];
+  if (!t) return '';
+  const out = [];
+  const group = (label, rows, render) => {
+    if (!rows.length) return;
+    out.push(`<div class="tree-row objgroup"><span class="name">${esc(label)}</span><span class="meta">${rows.length}</span></div>`);
+    for (const r of rows) out.push(render(r));
+  };
+
+  group('Indexes', t.indexes, (i) => `
+    <div class="tree-row object" title="${esc(i.definition || '')}">
+      <span class="kind idx">${i.primary ? 'PK' : i.unique ? 'UQ' : 'IX'}</span>
+      <span class="name">${esc(i.name)}</span>
+      <span class="meta">${esc(bytesShort(i.bytes))}</span>
+    </div>`);
+
+  // A primary key and its index are the same thing said twice, and the index
+  // list above already showed it.
+  group('Keys', t.constraints.filter((c) => c.type !== 'primary key' && c.type !== 'unique'), (c) => `
+    <div class="tree-row object" title="${esc(c.definition || '')}">
+      <span class="kind con">${esc(String(c.type || '?').split(' ').map((w) => w[0]).join('').toUpperCase())}</span>
+      <span class="name">${esc(c.name)}</span>
+      <span class="meta">${esc(c.type)}</span>
+    </div>`);
+
+  group('Triggers', t.triggers, (g) => `
+    <div class="tree-row object${g.enabled === false ? ' off' : ''}" title="${esc(g.definition || '')}">
+      <span class="kind trg">TR</span>
+      <span class="name">${esc(g.name)}</span>
+      <span class="meta">${g.enabled === false ? 'disabled' : ''}</span>
+    </div>`);
+
+  return out.join('');
+}
+
+/** Functions and sequences, which belong to the schema rather than a table. */
+function schemaObjectRows(live, schema, needle) {
+  if (!live.objects) return '';
+  const s = live.objects.bySchema[schema];
+  if (!s) return '';
+  const out = [];
+  const folder = (label, rows, key, render) => {
+    const matching = needle ? rows.filter((r) => r.name.toLowerCase().includes(needle)) : rows;
+    if (!matching.length) return;
+    const open = needle ? true : live.expanded.has(key);
+    out.push(`<div class="tree-row objgroup folder" data-conn-scope="${esc(live.id)}" data-toggle="${esc(key)}">
+      <span class="twisty">${open ? '&#9662;' : '&#9656;'}</span>
+      <span class="name">${esc(label)}</span><span class="meta">${matching.length}</span>
+    </div>`);
+    if (open) for (const r of matching) out.push(render(r));
+  };
+
+  folder('Functions', s.routines, `routines:${schema}`, (r) => `
+    <div class="tree-row object" title="${esc(`${r.kind} ${r.name}(${r.args || ''})${r.returns ? ` returns ${r.returns}` : ''}`)}">
+      <span class="kind fn">${r.kind === 'procedure' ? 'PR' : 'FN'}</span>
+      <span class="name">${esc(r.name)}</span>
+      <span class="meta">${esc(r.returns || '')}</span>
+    </div>`);
+
+  folder('Sequences', s.sequences, `sequences:${schema}`, (r) => `
+    <div class="tree-row object" title="${esc(`${r.name} — starts at ${r.start_value}, step ${r.increment}`)}">
+      <span class="kind seq">SQ</span>
+      <span class="name">${esc(r.name)}</span>
+      <span class="meta">${esc(r.type || '')}</span>
+    </div>`);
+
+  return out.join('');
+}
+
+/** Fetch the object catalogue once per connection, then redraw. */
+async function loadObjects(connId) {
+  const conn = state.conns.get(connId);
+  if (!conn || conn.objectsLoading || conn.objects) return;
+  conn.objectsLoading = true;
+  try {
+    conn.objects = await api.connections.objects(connId);
+  } catch (err) {
+    conn.objects = { byTable: {}, bySchema: {}, counts: {}, error: err.message };
+  } finally {
+    conn.objectsLoading = false;
+    renderSidebar();
+  }
+}
 
 /** The loaded schema is the only description of a relation the renderer has. */
 function findRelation(conn, schema, name) {

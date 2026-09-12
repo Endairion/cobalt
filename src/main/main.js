@@ -278,6 +278,7 @@ handle('conn:runDdl', (id, sql) => manager.ddl(id, sql));
 handle('conn:import', (id, spec) => manager.importRows(id, spec));
 handle('conn:processList', (id) => manager.processList(id));
 handle('conn:serverStats', (id) => manager.serverStats(id));
+handle('conn:objects', (id) => manager.schemaObjects(id));
 handle('conn:search', (id, tabKey, opts) => manager.searchDatabase(id, tabKey, opts));
 handle('conn:searchFilter', (id, opts) => manager.searchFilter(id, opts));
 

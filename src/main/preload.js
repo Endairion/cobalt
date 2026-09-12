@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('cobalt', {
     importRows: (id, spec) => call('conn:import', id, spec),
     processList: (id) => call('conn:processList', id),
     serverStats: (id) => call('conn:serverStats', id),
+    objects: (id) => call('conn:objects', id),
     search: (id, tabKey, opts) => call('conn:search', id, tabKey, opts),
     searchFilter: (id, opts) => call('conn:searchFilter', id, opts),
     killQuery: (id, pid, opts) => call('conn:killQuery', id, pid, opts),

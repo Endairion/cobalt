@@ -3,6 +3,23 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.21.0 — The rest of the schema
+*2026-09-13*
+
+Indexes, keys, triggers, functions and sequences in the sidebar.
+
+### Added
+- Expanding a table now shows its indexes, foreign keys and triggers alongside its columns. An index says whether it is the primary key, unique or ordinary, and how much disk it takes; hovering any of them shows the definition. A disabled trigger is struck through.
+- Functions and sequences hang off the schema, in folders that open on demand and are searched by the sidebar filter along with everything else.
+
+### Changed
+- A primary key is an index and a constraint at once, so it is listed under Indexes and not again under Keys. Listing it twice is noise, not completeness.
+- The catalogue is fetched once per connection, the first time you expand something, rather than with the schema tree - a database with thousands of tables should not pay for it on every refresh. A schema refresh drops it along with everything else.
+- Both engines report the same shape. MySQL folds its one-row-per-column index catalogue into one entry per index, so a composite index reads as the single thing it is, and simply reports no sequences rather than inventing any.
+
+### Fixed
+- The object queries were picking up the toast and temp schemas, which the tree query already knew to leave out.
+
 ## 0.20.0 — Find in database
 *2026-09-13*
 

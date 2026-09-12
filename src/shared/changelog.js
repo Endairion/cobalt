@@ -13,6 +13,20 @@
 
 const releases = [
   {
+    version: '0.21.0',
+    date: '2026-09-13',
+    title: 'The rest of the schema',
+    summary: 'Indexes, keys, triggers, functions and sequences in the sidebar.',
+    changes: [
+      { type: 'added', text: 'Expanding a table now shows its indexes, foreign keys and triggers alongside its columns. An index says whether it is the primary key, unique or ordinary, and how much disk it takes; hovering any of them shows the definition. A disabled trigger is struck through.' },
+      { type: 'added', text: 'Functions and sequences hang off the schema, in folders that open on demand and are searched by the sidebar filter along with everything else.' },
+      { type: 'changed', text: 'A primary key is an index and a constraint at once, so it is listed under Indexes and not again under Keys. Listing it twice is noise, not completeness.' },
+      { type: 'changed', text: 'The catalogue is fetched once per connection, the first time you expand something, rather than with the schema tree - a database with thousands of tables should not pay for it on every refresh. A schema refresh drops it along with everything else.' },
+      { type: 'changed', text: 'Both engines report the same shape. MySQL folds its one-row-per-column index catalogue into one entry per index, so a composite index reads as the single thing it is, and simply reports no sequences rather than inventing any.' },
+      { type: 'fixed', text: 'The object queries were picking up the toast and temp schemas, which the tree query already knew to leave out.' },
+    ],
+  },
+  {
     version: '0.20.0',
     date: '2026-09-13',
     title: 'Find in database',

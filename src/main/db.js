@@ -1076,6 +1076,45 @@ class Manager {
     return buildRowFilter({ dialect: this.get(id).driver, column, needle, mode, caseSensitive });
   }
 
+  /**
+   * Indexes, constraints, triggers, routines and sequences, keyed so the
+   * sidebar can hang them under the right table without searching a flat list
+   * every time it draws.
+   */
+  async schemaObjects(id) {
+    const conn = this.get(id);
+    const o = await conn.driver.objects(conn.pool);
+    const byTable = {};
+    const put = (kind, row) => {
+      const key = `${row.schema}.${row.table}`;
+      const t = byTable[key] || (byTable[key] = { indexes: [], constraints: [], triggers: [] });
+      t[kind].push(row);
+    };
+    for (const r of o.indexes) put('indexes', r);
+    for (const r of o.constraints) put('constraints', r);
+    for (const r of o.triggers) put('triggers', r);
+
+    const bySchema = {};
+    const putSchema = (kind, row) => {
+      const t = bySchema[row.schema] || (bySchema[row.schema] = { routines: [], sequences: [] });
+      t[kind].push(row);
+    };
+    for (const r of o.routines) putSchema('routines', r);
+    for (const r of o.sequences) putSchema('sequences', r);
+
+    return {
+      byTable,
+      bySchema,
+      counts: {
+        indexes: o.indexes.length,
+        constraints: o.constraints.length,
+        triggers: o.triggers.length,
+        routines: o.routines.length,
+        sequences: o.sequences.length,
+      },
+    };
+  }
+
   async serverStats(id) {
     const conn = this.get(id);
     const stats = await conn.driver.serverStats(conn.pool);

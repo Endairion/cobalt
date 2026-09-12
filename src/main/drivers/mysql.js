@@ -574,6 +574,91 @@ const driver = {
     };
   },
 
+  /**
+   * The same catalogue on MySQL. Index rows come back one per column, so they
+   * are folded into one entry per index with its columns in order — which is
+   * also the only way to see a composite index as the single thing it is.
+   *
+   * MySQL has no sequences (MariaDB does, and reports them as tables), so that
+   * list is simply empty rather than faked.
+   */
+  async objects(pool) {
+    const current = await pool.query('select database() as db');
+    const db = current.rows[0].db;
+    if (!db) return { indexes: [], constraints: [], triggers: [], routines: [], sequences: [] };
+
+    const lower = (rows) => rows.map((r) => {
+      const out = {};
+      for (const [k, v] of Object.entries(r)) out[k.toLowerCase()] = v;
+      return out;
+    });
+
+    const idx = lower((await pool.query(
+      `select table_name, index_name, seq_in_index, column_name, non_unique,
+              index_type, sub_part, nullable
+       from information_schema.statistics
+       where table_schema = ?
+       order by table_name, index_name, seq_in_index`, [db])).rows);
+
+    const byIndex = new Map();
+    for (const r of idx) {
+      const key = `${r.table_name}.${r.index_name}`;
+      if (!byIndex.has(key)) {
+        byIndex.set(key, {
+          schema: db, table: r.table_name, name: r.index_name,
+          unique: Number(r.non_unique) === 0,
+          primary: r.index_name === 'PRIMARY',
+          valid: true, bytes: 0, scans: null,
+          method: r.index_type, columns: [],
+        });
+      }
+      byIndex.get(key).columns.push(r.column_name);
+    }
+    const indexes = [...byIndex.values()].map((i) => ({
+      ...i,
+      definition: `${i.unique ? 'UNIQUE ' : ''}INDEX ${i.name} ON ${i.table} (${i.columns.join(', ')})`
+        + (i.method && i.method !== 'BTREE' ? ` USING ${i.method}` : ''),
+    }));
+
+    const constraints = lower((await pool.query(
+      `select tc.table_name, tc.constraint_name, lower(tc.constraint_type) as constraint_type,
+              group_concat(k.column_name order by k.ordinal_position) as columns,
+              max(k.referenced_table_name) as referenced_table
+       from information_schema.table_constraints tc
+       left join information_schema.key_column_usage k
+         on k.constraint_schema = tc.constraint_schema
+        and k.constraint_name = tc.constraint_name
+        and k.table_name = tc.table_name
+       where tc.table_schema = ?
+       group by tc.table_name, tc.constraint_name, tc.constraint_type
+       order by tc.table_name, tc.constraint_type, tc.constraint_name`, [db])).rows)
+      .map((r) => ({
+        schema: db, table: r.table_name, name: r.constraint_name, type: r.constraint_type,
+        definition: `${String(r.constraint_type).toUpperCase()} (${r.columns || ''})`
+          + (r.referenced_table ? ` REFERENCES ${r.referenced_table}` : ''),
+      }));
+
+    const triggers = lower((await pool.query(
+      `select trigger_name, event_object_table, action_timing, event_manipulation, action_statement
+       from information_schema.triggers where trigger_schema = ?
+       order by event_object_table, trigger_name`, [db])).rows)
+      .map((r) => ({
+        schema: db, table: r.event_object_table, name: r.trigger_name, enabled: true,
+        definition: `${r.action_timing} ${r.event_manipulation} — ${String(r.action_statement || '').replace(/\s+/g, ' ').slice(0, 300)}`,
+      }));
+
+    const routines = lower((await pool.query(
+      `select routine_name, lower(routine_type) as routine_type, dtd_identifier, external_language
+       from information_schema.routines where routine_schema = ?
+       order by routine_name`, [db])).rows)
+      .map((r) => ({
+        schema: db, name: r.routine_name, kind: r.routine_type,
+        returns: r.dtd_identifier || '', args: '', language: r.external_language || 'SQL',
+      }));
+
+    return { indexes, constraints, triggers, routines, sequences: [] };
+  },
+
   async processList(pool) {
     const r = await pool.query(
       `select id, user, host as client, coalesce(db, '') as \`database\`,

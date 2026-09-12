@@ -1368,3 +1368,26 @@ tr.best .bar-fill { background: var(--green); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .sr-sample mark { background: rgba(224, 163, 60, .28); color: var(--text); border-radius: 2px; }
+
+/* --------------------------- object browser --------------------------- */
+
+.tree-row.objgroup {
+  padding-left: 34px; font-size: 10.5px; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .04em; cursor: default;
+}
+.tree-row.objgroup.folder { cursor: pointer; padding-left: 20px; }
+.tree-row.objgroup.folder:hover { color: var(--text-dim); }
+.tree-row.object { padding-left: 42px; color: var(--text-dim); }
+.tree-row.object:hover { color: var(--text); }
+.tree-row.object.off .name { text-decoration: line-through; opacity: .6; }
+.tree-row.loading.sub { padding-left: 42px; }
+.tree-row .kind.idx, .tree-row .kind.con, .tree-row .kind.trg,
+.tree-row .kind.fn, .tree-row .kind.seq {
+  font-size: 9px; min-width: 18px; text-align: center;
+  border-radius: 3px; padding: 0 3px; margin-right: 5px;
+}
+.tree-row .kind.idx { color: var(--accent-text); background: var(--accent-soft); }
+.tree-row .kind.con { color: var(--amber); background: rgba(224, 163, 60, .14); }
+.tree-row .kind.trg { color: var(--green); background: rgba(69, 192, 125, .14); }
+.tree-row .kind.fn  { color: var(--text-dim); background: var(--bg-raised); }
+.tree-row .kind.seq { color: var(--text-dim); background: var(--bg-raised); }

@@ -541,6 +541,102 @@ const driver = {
     };
   },
 
+  /**
+   * Everything in a schema that is not a table or a view: indexes, constraints,
+   * triggers, routines, sequences.
+   *
+   * Fetched on its own rather than with the schema tree, because a database
+   * with thousands of tables should not pay for this on every refresh — the
+   * sidebar asks once, when you first open a table up.
+   */
+  async objects(pool) {
+    const indexes = await pool.query(`
+      select n.nspname as schema, t.relname as table, i.relname as name,
+             pg_get_indexdef(x.indexrelid) as definition,
+             x.indisunique as is_unique,
+             x.indisprimary as is_primary,
+             x.indisvalid as is_valid,
+             pg_relation_size(x.indexrelid)::bigint as bytes,
+             coalesce(s.idx_scan, 0)::bigint as scans
+      from pg_index x
+      join pg_class i on i.oid = x.indexrelid
+      join pg_class t on t.oid = x.indrelid
+      join pg_namespace n on n.oid = t.relnamespace
+      left join pg_stat_user_indexes s on s.indexrelid = x.indexrelid
+      where n.nspname not in ('pg_catalog', 'information_schema')
+        and n.nspname not like 'pg_toast%'
+        and n.nspname not like 'pg_temp%'
+      order by n.nspname, t.relname, i.relname`);
+
+    const constraints = await pool.query(`
+      select n.nspname as schema, t.relname as table, c.conname as name,
+             case c.contype
+               when 'p' then 'primary key' when 'u' then 'unique'
+               when 'f' then 'foreign key' when 'c' then 'check'
+               when 'x' then 'exclude' else c.contype::text end as type,
+             pg_get_constraintdef(c.oid) as definition
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+      where n.nspname not in ('pg_catalog', 'information_schema')
+        and n.nspname not like 'pg_toast%'
+        and n.nspname not like 'pg_temp%'
+      order by n.nspname, t.relname, c.contype, c.conname`);
+
+    const triggers = await pool.query(`
+      select n.nspname as schema, t.relname as table, g.tgname as name,
+             pg_get_triggerdef(g.oid) as definition,
+             g.tgenabled <> 'D' as enabled
+      from pg_trigger g
+      join pg_class t on t.oid = g.tgrelid
+      join pg_namespace n on n.oid = t.relnamespace
+      where not g.tgisinternal
+        and n.nspname not in ('pg_catalog', 'information_schema')
+        and n.nspname not like 'pg_toast%'
+        and n.nspname not like 'pg_temp%'
+      order by n.nspname, t.relname, g.tgname`);
+
+    const routines = await pool.query(`
+      select n.nspname as schema, p.proname as name,
+             case p.prokind when 'p' then 'procedure' when 'a' then 'aggregate'
+                            when 'w' then 'window' else 'function' end as kind,
+             pg_get_function_result(p.oid) as returns,
+             pg_get_function_arguments(p.oid) as args,
+             l.lanname as language
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      join pg_language l on l.oid = p.prolang
+      where n.nspname not in ('pg_catalog', 'information_schema')
+        and n.nspname not like 'pg_toast%'
+        and n.nspname not like 'pg_temp%'
+      order by n.nspname, p.proname`);
+
+    const sequences = await pool.query(`
+      select n.nspname as schema, c.relname as name,
+             format_type(s.seqtypid, null) as type,
+             s.seqstart::text as start_value,
+             s.seqincrement::text as increment
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_sequence s on s.seqrelid = c.oid
+      where c.relkind = 'S' and n.nspname not in ('pg_catalog', 'information_schema')
+        and n.nspname not like 'pg_toast%'
+        and n.nspname not like 'pg_temp%'
+      order by n.nspname, c.relname`);
+
+    return {
+      indexes: indexes.rows.map((r) => ({
+        schema: r.schema, table: r.table, name: r.name, definition: r.definition,
+        unique: r.is_unique, primary: r.is_primary, valid: r.is_valid,
+        bytes: Number(r.bytes), scans: Number(r.scans),
+      })),
+      constraints: constraints.rows,
+      triggers: triggers.rows,
+      routines: routines.rows,
+      sequences: sequences.rows,
+    };
+  },
+
   async processList(pool) {
     const r = await pool.query(`
       select pid::int as id,

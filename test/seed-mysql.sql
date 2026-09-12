@@ -102,4 +102,24 @@ drop procedure seed_orders;
 insert into audit_log (actor, action)
 select 'system', concat('boot ', id) from customers limit 20;
 
+-- A trigger and a routine, so the object browser has something to show.
+drop trigger if exists customers_audit;
+delimiter //
+create trigger customers_audit after update on customers
+for each row
+begin
+  insert into audit_log (actor, action) values ('trigger', 'customer changed');
+end //
+delimiter ;
+
+drop function if exists customer_count;
+delimiter //
+create function customer_count() returns bigint reads sql data
+begin
+  declare c bigint;
+  select count(*) into c from customers;
+  return c;
+end //
+delimiter ;
+
 analyze table customers, orders, docs, audit_log;

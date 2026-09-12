@@ -75,4 +75,20 @@ from generate_series(1, 8000);
 insert into shop.audit_log (actor, action)
 select 'system', 'boot ' || g from generate_series(1, 20) g;
 
+-- A trigger and a function, so the object browser has something to show.
+create function shop.touch_audit() returns trigger as $fn$
+begin
+  insert into shop.audit_log (actor, action) values ('trigger', 'customer changed');
+  return new;
+end;
+$fn$ language plpgsql;
+
+create trigger customers_audit
+  after update on shop.customers
+  for each row execute function shop.touch_audit();
+
+create function shop.customer_count() returns bigint as $fn$
+  select count(*) from shop.customers;
+$fn$ language sql stable;
+
 analyze;
