@@ -13,6 +13,17 @@
 
 const releases = [
   {
+    version: '0.23.0',
+    date: '2026-09-14',
+    title: 'Switch database without leaving',
+    summary: 'The database name on a connection is now a control.',
+    changes: [
+      { type: 'added', text: 'Click the database name beside a live connection to open any other database on that server. The one you are in is ticked and not clickable, so the list is the same shape every time. It is also on the connection row menu as Open database, for when you are already in there.' },
+      { type: 'changed', text: 'Previously this was only offered when a database turned out to be empty, which is the one moment you are forced to care. One server usually holds several - an app database beside its test twin - and going through the connection dialog to look at the other one is friction you stop noticing and just put up with.' },
+      { type: 'changed', text: 'Switching remembers the choice, so the connection opens there next time. The stored password is kept.' },
+    ],
+  },
+  {
     version: '0.22.1',
     date: '2026-09-14',
     title: 'An empty database now says so',

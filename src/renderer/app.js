@@ -416,7 +416,10 @@ function renderSidebar() {
       <span class="dot"></span>
       <span class="name">${esc(saved.name)}</span>
       ${saved.readOnly ? '<span class="ro-flag" title="read-only">RO</span>' : ''}
-      <span class="meta">${live ? esc(live.database) : ''}</span>
+      ${live
+    ? `<button class="meta db-pick" data-dbpicker="${esc(live.id)}"
+         title="${esc(live.database)} — click to open a different database on this server">${esc(live.database)}</button>`
+    : '<span class="meta"></span>'}
       <button class="row-btn" data-connmenu="${esc(saved.id)}" title="Connection actions">&#8943;</button>
     </div>`);
 
@@ -480,6 +483,36 @@ function renderSidebar() {
 }
 
 const kindLabel = (k) => ({ r: 'T', p: 'P', v: 'V', m: 'MV', f: 'F' }[k] || '?');
+
+/**
+ * Every database on this server, so you can move between them without editing
+ * the connection. One server usually holds several — an app database beside
+ * its test twin — and having to go through the dialog to look at the other one
+ * is the sort of friction you stop noticing and just put up with.
+ */
+function openDatabasePicker(connId, anchorEl) {
+  const live = state.conns.get(connId);
+  if (!live) return;
+  const names = (live.tree && live.tree.databases) || [];
+
+  if (!names.length) {
+    // The list arrives with the schema, so before that there is nothing to show.
+    showMenu([{ header: 'Databases' }, { label: 'Still reading the server…', disabled: true }], anchorEl);
+    return;
+  }
+
+  showMenu([
+    { header: `${live.name} · ${names.length} database${names.length === 1 ? '' : 's'}` },
+    ...names.map((name) => ({
+      label: name,
+      // The one you are in is shown as a tick rather than being left out, so the
+      // list is the same shape every time you open it.
+      sub: name === live.database ? '✓' : '',
+      disabled: name === live.database,
+      run: () => switchDatabase(connId, name),
+    })),
+  ], anchorEl);
+}
 
 /**
  * A connection can succeed and still show nothing, because it opened a database
@@ -738,6 +771,13 @@ function approx(n) {
 
 el.tree.addEventListener('click', async (e) => {
   if (e.target.closest('[data-newconn]')) { openConnectionDialog(null); return; }
+
+  const picker = e.target.closest('[data-dbpicker]');
+  if (picker) {
+    e.stopPropagation();
+    openDatabasePicker(picker.dataset.dbpicker, picker);
+    return;
+  }
 
   const swap = e.target.closest('[data-switchdb]');
   if (swap) {
@@ -2148,6 +2188,7 @@ connections.wire({
   connect,
   disconnect,
   loadSchema,
+  switchDatabase,
   duplicate: duplicateConnection,
   reorder: reorderConnections,
   deleteConnection,

@@ -1405,3 +1405,11 @@ tr.best .bar-fill { background: var(--green); }
   font-family: var(--mono); font-size: 11px; cursor: pointer;
 }
 .db-switch:hover { border-color: var(--accent); background: var(--accent-soft); }
+.tree-row .meta.db-pick {
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 0 6px; cursor: pointer; background: none;
+  font-family: inherit; font-size: inherit; color: var(--text-faint);
+}
+.tree-row .meta.db-pick:hover {
+  color: var(--accent-text); border-color: var(--border-strong); background: var(--panel);
+}

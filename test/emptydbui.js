@@ -157,6 +157,59 @@ const HELP = `
   await c.end();
   expect(Number(r.rows[0].n) >= 4, `the fixture is intact (${r.rows[0].n} base tables in shop)`);
 
+
+  console.log('\nswitching again from a database that is not empty');
+
+  // The chips only appear when there is nothing to show. Once you are looking at
+  // a real database you still need a way out of it, without editing anything.
+  const again = await run('empty-picker.png', `(async () => {
+    ${HELP}
+    await w(3000);
+    const before = {
+      tables: document.querySelectorAll('.tree-row.rel').length,
+      hint: !!document.querySelector('.db-empty'),
+      picker: !!document.querySelector('[data-dbpicker]')
+    };
+    document.querySelector('[data-dbpicker]').click();
+    await w(500);
+    const items = [...document.querySelectorAll('.ctx-menu .ctx-item')].map(n => ({
+      label: n.querySelector('.ctx-label').textContent,
+      tick: (n.querySelector('.ctx-sub') || {}).textContent || '',
+      disabled: n.classList.contains('disabled')
+    }));
+    const header = (document.querySelector('.ctx-menu .ctx-header') || {}).textContent || '';
+    // Move to the other database on this server.
+    const target = [...document.querySelectorAll('.ctx-menu .ctx-item')]
+      .find(n => n.querySelector('.ctx-label').textContent === 'postgres');
+    const r = target.getBoundingClientRect();
+    const at = { bubbles: true, clientX: Math.round(r.left + 5), clientY: Math.round(r.top + 5) };
+    target.dispatchEvent(new MouseEvent('mousedown', at));
+    target.dispatchEvent(new MouseEvent('mouseup', at));
+    target.dispatchEvent(new MouseEvent('click', at));
+    await w(4500);
+    return {
+      before, items, header,
+      nowEmpty: !!document.querySelector('.db-empty'),
+      db: text('.tree-row.conn.live .meta')
+    };
+  })()`, 'cobalt');
+  if (!again.ok) fails++;
+  const ag = readJs(again.out);
+  expect(ag.before && ag.before.tables >= 5 && ag.before.hint === false,
+    'it starts on a database that has tables');
+  expect(ag.before && ag.before.picker === true,
+    'the database name is a control, not just a label');
+  expect(/2 databases/.test(ag.header || ''),
+    `the menu says how many there are (got ${JSON.stringify(ag.header)})`);
+  expect((ag.items || []).map((i) => i.label).includes('postgres')
+    && (ag.items || []).map((i) => i.label).includes('cobalt'),
+    `every database is listed (got ${JSON.stringify((ag.items || []).map((i) => i.label))})`);
+  const current = (ag.items || []).find((i) => i.label === 'cobalt');
+  expect(current && current.tick === '\u2713' && current.disabled === true,
+    `the one you are in is ticked and not clickable (got ${JSON.stringify(current)})`);
+  expect(ag.nowEmpty === true && /postgres/.test(ag.db || ''),
+    `and picking another one moves there (got ${JSON.stringify(ag.db)})`);
+
   console.log(`\n${fails ? `${fails} failed` : 'all checks passed'}\n`);
   process.exit(fails ? 1 : 0);
 })();

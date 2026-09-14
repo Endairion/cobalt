@@ -3,6 +3,18 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.23.0 — Switch database without leaving
+*2026-09-14*
+
+The database name on a connection is now a control.
+
+### Added
+- Click the database name beside a live connection to open any other database on that server. The one you are in is ticked and not clickable, so the list is the same shape every time. It is also on the connection row menu as Open database, for when you are already in there.
+
+### Changed
+- Previously this was only offered when a database turned out to be empty, which is the one moment you are forced to care. One server usually holds several - an app database beside its test twin - and going through the connection dialog to look at the other one is friction you stop noticing and just put up with.
+- Switching remembers the choice, so the connection opens there next time. The stored password is kept.
+
 ## 0.22.1 — An empty database now says so
 *2026-09-14*
 

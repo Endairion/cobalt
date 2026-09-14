@@ -38,6 +38,18 @@ export function openConnectionMenu(savedId, anchor) {
   if (live) {
     items.push({ label: 'Use for current tab', run: () => ctx.useForCurrentTab(live.id) });
     items.push({ label: 'Open a tab on this connection', run: () => ctx.newTabOn(live.id) });
+    const databases = (live.tree && live.tree.databases) || [];
+    if (databases.length > 1) {
+      items.push({
+        label: 'Open database',
+        items: databases.map((name) => ({
+          label: name,
+          sub: name === live.database ? '✓' : '',
+          disabled: name === live.database,
+          run: () => ctx.switchDatabase(live.id, name),
+        })),
+      });
+    }
     items.push({ label: 'Refresh schema', run: () => ctx.loadSchema(live.id) });
     items.push({ label: 'Disconnect', run: () => ctx.disconnect(live.id) });
   } else {

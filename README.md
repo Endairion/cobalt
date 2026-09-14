@@ -76,7 +76,12 @@ database to whatever network the laptop is on - and there is a test asserting th
 secrets are encrypted through `safeStorage` like the database password and never reach
 the renderer.
 
-**Query editor. SQL syntax highlighting, autocomplete fed from the live schema
+**Databases.** One server usually holds more than one. The database name beside a live
+connection is a control: click it for any other database on that server, or use Open
+database on the connection's row menu. The choice is remembered. A database that turns
+out to be empty says so and lists the others rather than showing a blank sidebar.
+
+**Query editor.** SQL syntax highlighting, autocomplete fed from the live schema
 (tables, and columns per table), bracket matching, multi-cursor, search, fold.
 The statement under the caret is tinted, and that is exactly what `Ctrl+Enter` runs —
 with a selection, it runs the selection instead. Each tab keeps its own undo history.
