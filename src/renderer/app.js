@@ -2901,6 +2901,7 @@ window.__cobaltGridRows = () => {
 };
 window.__cobaltSetSql = (sql) => editor.replaceAll(sql, sql.length);
 window.__cobaltGetSql = () => editor.getValue();
+window.__cobaltTypeSql = (text) => editor.type(text);
 window.__cobaltSetCaret = (pos) => editor.setCaret(pos);
 window.__cobaltSelect = (from, to) => editor.select(from, to);
 window.__cobaltMenu = (cmd) => menuCommand(cmd);

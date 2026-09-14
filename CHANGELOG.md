@@ -3,6 +3,19 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.25.1 — Keywords capitalize as you type
+*2026-09-14*
+
+Finish typing a keyword and it capitalizes itself.
+
+### Added
+- Type select and the moment you finish the word - a space, a comma, a newline - it becomes SELECT, the way HeidiSQL does it. Capitalizing a script no longer means reaching for the formatter or holding shift.
+- It never touches a word while the caret is still inside it, and it never reaches back into text you left alone: only the word you just finished.
+- A word that only looks like a keyword is left as it is - inside a string, inside a comment, inside a quoted identifier, or after a dot, where orders.order is a column whatever it is spelled like.
+
+### Changed
+- Autocomplete now offers keywords in capitals too, so accepting a suggestion agrees with what typing would have produced.
+
 ## 0.25.0 — Keywords in capitals
 *2026-09-14*
 

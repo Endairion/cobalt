@@ -133,6 +133,24 @@ async function runSmoke(w) {
         await wait(300);
       }
 
+      // Real characters into whatever has focus. Separate from --smoke-keys
+      // because that one is about accelerators: it names keys and waits most of
+      // a second between them. This is for checking that typing does what
+      // typing is supposed to do.
+      const typeArg = process.argv.find((a) => a.startsWith('--smoke-type='));
+      if (typeArg) {
+        w.setAlwaysOnTop(true);
+        w.show();
+        w.focus();
+        await wait(900);
+        for (const ch of typeArg.slice('--smoke-type='.length)) {
+          w.webContents.sendInputEvent({ type: 'char', keyCode: ch });
+          await wait(25);
+        }
+        await wait(400);
+        w.setAlwaysOnTop(false);
+      }
+
       // Optional real key presses, to prove accelerators reach the app.
       const keysArg = process.argv.find((a) => a.startsWith('--smoke-keys='));
       if (keysArg) {

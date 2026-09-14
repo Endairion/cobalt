@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.25.1',
+    date: '2026-09-14',
+    title: 'Keywords capitalize as you type',
+    summary: 'Finish typing a keyword and it capitalizes itself.',
+    changes: [
+      { type: 'added', text: 'Type select and the moment you finish the word - a space, a comma, a newline - it becomes SELECT, the way HeidiSQL does it. Capitalizing a script no longer means reaching for the formatter or holding shift.' },
+      { type: 'added', text: 'It never touches a word while the caret is still inside it, and it never reaches back into text you left alone: only the word you just finished.' },
+      { type: 'added', text: 'A word that only looks like a keyword is left as it is - inside a string, inside a comment, inside a quoted identifier, or after a dot, where orders.order is a column whatever it is spelled like.' },
+      { type: 'changed', text: 'Autocomplete now offers keywords in capitals too, so accepting a suggestion agrees with what typing would have produced.' },
+    ],
+  },
+  {
     version: '0.25.0',
     date: '2026-09-14',
     title: 'Keywords in capitals',

@@ -17,6 +17,7 @@ import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { withoutAppKeys } from '../shared/commands.js';
 import { tags as t } from '@lezer/highlight';
 import { splitStatements } from '../main/sqlsplit.js';
+import { capitalizeKeywordsAsYouType } from './autocaps.js';
 
 const theme = EditorView.theme({
   '&': { color: '#d8dde8', backgroundColor: '#14161c', height: '100%' },
@@ -81,7 +82,7 @@ export class SqlEditor {
   constructor(parent, { onChange, onRun, onRunAll, onCursor } = {}) {
     this.schemaCompartment = new Compartment();
     // Held outside the state so newly created tab states inherit the live schema.
-    this.sqlConfig = { dialect: PostgreSQL, upperCaseKeywords: false };
+    this.sqlConfig = { dialect: PostgreSQL, upperCaseKeywords: true };
     this.onChange = onChange || (() => {});
     this.onCursor = onCursor || (() => {});
 
@@ -110,6 +111,7 @@ export class SqlEditor {
           search({ top: true }),
           syntaxHighlighting(highlight),
           activeStatement,
+          capitalizeKeywordsAsYouType,
           runKeys,
           // Without the filter, CodeMirror silently eats the app's shortcuts:
           // it handles keys in the renderer and consumes the ones its own
@@ -133,6 +135,26 @@ export class SqlEditor {
     ];
 
     this.view = new EditorView({ parent, state: this.makeState('') });
+  }
+
+  /**
+   * Type text one character at a time, the way a person would.
+   *
+   * Each character is its own `input.type` transaction, which is exactly what
+   * CodeMirror dispatches for a keystroke — so anything watching for typing,
+   * such as the keyword capitalizer, sees what it would really see. Used by the
+   * tests; real typing does not come through here.
+   */
+  type(text) {
+    for (const ch of String(text)) {
+      const at = this.view.state.selection.main.head;
+      this.view.dispatch({
+        changes: { from: at, insert: ch },
+        selection: { anchor: at + ch.length },
+        userEvent: 'input.type',
+        scrollIntoView: true,
+      });
+    }
   }
 
   /** A fresh document state; one per query tab, so each keeps its own undo stack. */
