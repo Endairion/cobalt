@@ -1,6 +1,7 @@
 'use strict';
 
-const { dialog, shell } = require('electron');
+const { shell } = require('electron');
+const { ask, tell } = require('./ask');
 
 /**
  * Updating without uninstalling.
@@ -47,12 +48,10 @@ function wire(win, { interactive }) {
     state.checking = false;
     state.error = err && err.message ? err.message : String(err);
     if (interactive) {
-      dialog.showMessageBox(win, {
-        type: 'warning',
+      tell(win, {
         title: 'Could not check for updates',
         message: 'Cobalt could not reach the update feed.',
         detail: state.error,
-        buttons: ['OK'],
       });
     }
   });
@@ -61,11 +60,9 @@ function wire(win, { interactive }) {
     state.checking = false;
     state.available = null;
     if (interactive) {
-      dialog.showMessageBox(win, {
-        type: 'info',
+      tell(win, {
         title: 'Up to date',
         message: `Cobalt ${info && info.version ? info.version : ''} is the latest version.`,
-        buttons: ['OK'],
       });
     }
   });
@@ -89,17 +86,15 @@ function wire(win, { interactive }) {
     if (win && !win.isDestroyed()) {
       win.webContents.send('update:status', { kind: 'ready', version: info.version });
     }
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'info',
+    const now = await ask(win, {
       title: 'Update ready',
       message: `Cobalt ${info.version} is ready to install.`,
       detail: 'It will be installed over the current version when you quit — '
         + 'your connections and open tabs are kept. Restart now to get it straight away.',
-      buttons: ['Restart now', 'Later'],
-      defaultId: 0,
-      cancelId: 1,
+      confirmLabel: 'Restart now',
+      cancelLabel: 'Later',
     });
-    if (response === 0) up.quitAndInstall();
+    if (now) up.quitAndInstall();
   });
 
   return up;
@@ -110,13 +105,11 @@ async function checkForUpdates(win, { interactive = true } = {}) {
   const { app } = require('electron');
   if (!app.isPackaged) {
     if (interactive) {
-      await dialog.showMessageBox(win, {
-        type: 'info',
+      await tell(win, {
         title: 'Not an installed copy',
         message: 'This is a development build, so there is nothing to update.',
         detail: 'Run `npm run dist` to build an installer, or install Cobalt from one '
           + 'and updates will be offered here.',
-        buttons: ['OK'],
       });
     }
     return;
@@ -129,11 +122,9 @@ async function checkForUpdates(win, { interactive = true } = {}) {
     state.checking = false;
     state.error = err.message;
     if (interactive) {
-      dialog.showMessageBox(win, {
-        type: 'warning',
+      tell(win, {
         title: 'Could not check for updates',
         message: err.message,
-        buttons: ['OK'],
       });
     }
   }

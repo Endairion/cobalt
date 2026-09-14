@@ -151,7 +151,7 @@ function openOp({ title, subtitle, fields, build, runLabel = 'Run', danger = fal
   async function go() {
     if (!current) return;
     if (confirm) {
-      const ok = await ctx.confirm({ ...confirm, detail: current });
+      const ok = await ctx.confirm({ ...confirm, detail: current, code: true });
       if (!ok) return;
     }
     runBtn.disabled = true;

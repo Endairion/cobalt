@@ -3,6 +3,18 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.24.0 — The app asks its own questions
+*2026-09-14*
+
+Confirmations are drawn by Cobalt instead of by Windows.
+
+### Changed
+- Every confirmation — discarding staged edits, committing a batch, dropping a table, deleting a connection, installing an update — is now a dialog in the app. It was a Windows message box: another typeface, another grey, the buttons in the other order, and a title bar naming the executable. It read as though something had gone wrong rather than as part of the app.
+- A question asked from inside a dialog now opens over it rather than replacing it. Confirming an ALTER TABLE leaves the schema dialog where it was, so cancelling puts you back in it with your settings intact.
+- The statement you are confirming is shown as SQL, in the editor font, rather than as a line of prose.
+- A destructive question opens on Cancel, so leaning on the space bar cannot drop a table. Enter answers yes, Escape answers no, and clicking outside answers no.
+- File pickers are still the operating system’s. Those are its job and there is no honest way to replace them.
+
 ## 0.23.0 — Switch database without leaving
 *2026-09-14*
 

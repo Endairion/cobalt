@@ -89,8 +89,15 @@ contextBridge.exposeInMainWorld('cobalt', {
     pickFile: (opts) => call('file:pickFile', opts),
   },
   ui: {
-    confirm: (opts) => call('dialog:confirm', opts),
     copy: (text) => call('clipboard:write', text),
+    // Questions the main process wants drawn in the app's own style.
+    onAsk: (fn) => {
+      const listener = (_e, payload) => fn(payload);
+      ipcRenderer.on('ui:ask', listener);
+      return () => ipcRenderer.removeListener('ui:ask', listener);
+    },
+    ackAsk: (id) => ipcRenderer.send('ui:ask:ack', id),
+    replyAsk: (id, answer) => ipcRenderer.send('ui:ask:reply', id, answer),
     onUpdateStatus: (fn) => ipcRenderer.on('update:status', (_e, payload) => fn(payload)),
     onMenu: (fn) => {
       const listener = (_e, cmd) => fn(cmd);

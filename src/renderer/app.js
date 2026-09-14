@@ -15,6 +15,7 @@ import * as transfer from './transfer.js';
 import * as processes from './processes.js';
 import * as health from './health.js';
 import * as dbsearch from './dbsearch.js';
+import * as confirm from './confirm.js';
 
 const api = window.cobalt;
 const $ = (id) => document.getElementById(id);
@@ -180,7 +181,7 @@ async function closeTab(id) {
   if (idx === -1) return;
   const tab = state.tabs[idx];
   if (tab.grid && tab.grid.dirtyCount()) {
-    const ok = await api.ui.confirm({
+    const ok = await confirm.ask({
       title: 'Unsaved grid changes',
       message: `"${tab.title}" has ${tab.grid.changeSummary()} that have not been committed.`,
       detail: 'Closing the tab discards them.',
@@ -729,7 +730,7 @@ processes.wire({
   showOverlay: (node, opts) => showOverlay(node, opts),
   list: (connId) => api.connections.processList(connId),
   kill: (connId, pid, opts) => api.connections.killQuery(connId, pid, opts),
-  confirm: (opts) => api.ui.confirm(opts),
+  confirm: (opts) => confirm.ask(opts),
   copy: (text) => api.ui.copy(text),
   toast: (m, kind) => toast(m, kind),
   connName: (connId) => {
@@ -756,7 +757,7 @@ schemaops.wire({
   // A schema change invalidates autocomplete, the tree and the FK map, so the
   // whole thing is re-read rather than patched.
   refresh: (connId) => loadSchema(connId),
-  confirm: (opts) => api.ui.confirm(opts),
+  confirm: (opts) => confirm.ask(opts),
   copy: (text) => api.ui.copy(text),
   toast: (m) => toast(m),
   openSql: (sql, connId) => newTab({ title: 'Schema change', sql: `${sql}\n`, connId }),
@@ -950,7 +951,7 @@ async function runScript(all) {
   if (tab.running) { toast('Query already running in this tab.'); return; }
 
   if (tab.grid && tab.grid.dirtyCount()) {
-    const ok = await api.ui.confirm({
+    const ok = await confirm.ask({
       title: 'Uncommitted changes',
       message: `The grid has ${tab.grid.changeSummary()} that have not been committed.`,
       detail: 'Running a new query discards them.',
@@ -1053,7 +1054,7 @@ async function applyFilters(tab, specs) {
   const baseSql = tab.filterBaseSql;
 
   if (tab.grid && tab.grid.dirtyCount()) {
-    const ok = await api.ui.confirm({
+    const ok = await confirm.ask({
       title: 'Uncommitted changes',
       message: `Re-running with a filter discards ${tab.grid.changeSummary()}.`,
       confirmLabel: 'Discard and filter',
@@ -1377,7 +1378,7 @@ history.wire({
   search: (opts) => api.history.search(opts),
   stats: () => api.history.stats(),
   clear: () => api.history.clear(),
-  confirm: (opts) => api.ui.confirm(opts),
+  confirm: (opts) => confirm.ask(opts),
   showOverlay: (node) => showOverlay(node),
   activeConnection: () => {
     const tab = activeTab();
@@ -1445,7 +1446,7 @@ async function applyWhere(expr) {
   if (!check.ok) { setFilterMessage(check.error, 'err'); el.fbInput.focus(); return; }
 
   if (tab.grid && tab.grid.dirtyCount()) {
-    const ok = await api.ui.confirm({
+    const ok = await confirm.ask({
       title: 'Uncommitted changes',
       message: `Filtering discards ${tab.grid.changeSummary()}.`,
       confirmLabel: 'Discard and filter',
@@ -1732,7 +1733,7 @@ function pageStatus(tab) {
 async function applySort(tab, sort) {
   if (!tab.pageState) return;
   if (tab.grid && tab.grid.dirtyCount()) {
-    const ok = await api.ui.confirm({
+    const ok = await confirm.ask({
       title: 'Uncommitted changes',
       message: `Re-sorting discards ${tab.grid.changeSummary()}.`,
       confirmLabel: 'Discard and sort',
@@ -1967,7 +1968,7 @@ el.resultTabs.addEventListener('click', async (e) => {
   const idx = Number(r.dataset.r);
   if (idx === tab.activeResult) return;
   if (tab.grid && tab.grid.dirtyCount()) {
-    const ok = await api.ui.confirm({
+    const ok = await confirm.ask({
       title: 'Uncommitted changes',
       message: `Switching result sets discards ${tab.grid.changeSummary()}.`,
       confirmLabel: 'Discard',
@@ -2014,7 +2015,7 @@ async function commitGrid() {
   const change = tab.grid.buildChanges();
   if (!change) return;
   const summary = tab.grid.changeSummary();
-  const ok = await api.ui.confirm({
+  const ok = await confirm.ask({
     title: 'Commit changes',
     message: `Apply ${summary} to ${change.source.schema}.${change.source.table}?`,
     detail: 'Runs inside a single transaction; any failure rolls the whole batch back.',
@@ -2149,7 +2150,7 @@ async function reorderConnections(ids) {
 
 /** Confirm, disconnect if live, then forget the saved record. */
 async function deleteConnection(saved) {
-  const ok = await api.ui.confirm({
+  const ok = await confirm.ask({
     title: 'Delete connection',
     message: `Delete "${saved.name}"?`,
     detail: 'This removes the saved connection and its stored password. Nothing on the server changes.',
@@ -2439,7 +2440,7 @@ function openConnectionDialog(record) {
 
   if (record) {
     g('f-del').addEventListener('click', async () => {
-      const ok = await api.ui.confirm({
+      const ok = await confirm.ask({
         title: 'Delete connection',
         message: `Delete "${record.name}"?`,
         confirmLabel: 'Delete',
@@ -2823,6 +2824,18 @@ function menuCommand(cmd) {
 }
 
 api.ui.onMenu(menuCommand);
+
+// The main process has questions of its own — an update is ready, a check
+// failed — and a Windows message box for those would look just as out of place.
+if (api.ui.onAsk) {
+  api.ui.onAsk(async (payload) => {
+    // Acknowledge first: the main process falls back to a native box if nobody
+    // picks the question up, and a person may take a while to answer.
+    api.ui.ackAsk(payload.id);
+    const answer = await confirm.ask(payload);
+    api.ui.replyAsk(payload.id, answer);
+  });
+}
 
 // An update downloading in the background says so rather than being invisible,
 // but never takes over the window — it installs when you quit.

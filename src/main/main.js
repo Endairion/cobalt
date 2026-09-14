@@ -454,19 +454,6 @@ handle('file:pickFile', async ({ label = 'File', extensions = ['*'] } = {}) => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-handle('dialog:confirm', async ({ title, message, detail, confirmLabel, destructive }) => {
-  const r = await dialog.showMessageBox(win, {
-    type: destructive ? 'warning' : 'question',
-    buttons: [confirmLabel || 'OK', 'Cancel'],
-    defaultId: 0,
-    cancelId: 1,
-    title: title || 'Cobalt',
-    message: message || '',
-    detail: detail || undefined,
-  });
-  return r.response === 0;
-});
-
 /* --------------------------- lifecycle --------------------------- */
 
 app.whenReady().then(() => {

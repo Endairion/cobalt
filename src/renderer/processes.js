@@ -135,6 +135,7 @@ export async function openProcessList(connId) {
         ? `Close connection ${pid} and roll back whatever it was doing?`
         : `Stop the statement running on connection ${pid}?`,
       detail: target && target.query ? target.query.slice(0, 400) : undefined,
+      code: true,
       confirmLabel: terminate ? 'Kill it' : 'Cancel it',
       destructive: true,
     });

@@ -13,6 +13,19 @@
 
 const releases = [
   {
+    version: '0.24.0',
+    date: '2026-09-14',
+    title: 'The app asks its own questions',
+    summary: 'Confirmations are drawn by Cobalt instead of by Windows.',
+    changes: [
+      { type: 'changed', text: 'Every confirmation — discarding staged edits, committing a batch, dropping a table, deleting a connection, installing an update — is now a dialog in the app. It was a Windows message box: another typeface, another grey, the buttons in the other order, and a title bar naming the executable. It read as though something had gone wrong rather than as part of the app.' },
+      { type: 'changed', text: 'A question asked from inside a dialog now opens over it rather than replacing it. Confirming an ALTER TABLE leaves the schema dialog where it was, so cancelling puts you back in it with your settings intact.' },
+      { type: 'changed', text: 'The statement you are confirming is shown as SQL, in the editor font, rather than as a line of prose.' },
+      { type: 'changed', text: 'A destructive question opens on Cancel, so leaning on the space bar cannot drop a table. Enter answers yes, Escape answers no, and clicking outside answers no.' },
+      { type: 'changed', text: 'File pickers are still the operating system’s. Those are its job and there is no honest way to replace them.' },
+    ],
+  },
+  {
     version: '0.23.0',
     date: '2026-09-14',
     title: 'Switch database without leaving',
