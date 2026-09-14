@@ -1438,3 +1438,34 @@ tr.best .bar-fill { background: var(--green); }
 /* The focused button matters here — a destructive question opens on Cancel and
    you should be able to see that — so this shows on programmatic focus too. */
 .modal.ask-modal .btn:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* --------------------------- the table maker --------------------------- */
+
+.modal.create-table { width: 720px; max-width: 96vw; }
+
+/* Name, type, default, then three flags and the remove button. */
+.ct-head, .ct-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 28px 28px 28px 26px;
+  gap: 6px; align-items: center;
+}
+.ct-head {
+  color: var(--text-dim); font-size: 11px; padding: 0 2px 4px;
+}
+.ct-head span:nth-child(n+4) { text-align: center; cursor: help; }
+
+.ct-rows { display: flex; flex-direction: column; gap: 5px; max-height: 240px; overflow: auto; }
+.ct-row input[type="text"] {
+  padding: 5px 8px; min-width: 0;
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-radius: 6px; outline: none; color: var(--text);
+  font-family: var(--mono); font-size: 12px; user-select: text;
+}
+.ct-row input[type="text"]:focus { border-color: var(--accent); }
+.ct-row input[type="text"]:disabled { opacity: 0.4; }
+.ct-row input[type="checkbox"] { margin: 0 auto; }
+.ct-row .ct-del { padding: 2px 6px; color: var(--text-dim); }
+.ct-row .ct-del:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
+
+.ct-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.ct-actions .hint { color: var(--text-dim); font-size: 11px; }

@@ -50,6 +50,14 @@ export function openConnectionMenu(savedId, anchor) {
         })),
       });
     }
+    items.push({ sep: true });
+    for (const item of ctx.createMenuItems({
+      connId: live.id,
+      engine: live.engine || 'postgres',
+      readOnly: !!live.readOnly,
+      database: live.database,
+    })) items.push(item);
+    items.push({ sep: true });
     items.push({ label: 'Refresh schema', run: () => ctx.loadSchema(live.id) });
     items.push({ label: 'Disconnect', run: () => ctx.disconnect(live.id) });
   } else {

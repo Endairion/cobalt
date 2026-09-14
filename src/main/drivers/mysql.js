@@ -390,7 +390,10 @@ const driver = {
       for (const [k, v] of Object.entries(r)) out[k.toLowerCase()] = v;
       return out;
     });
+    // A schema here is the database you are in, so there is exactly one and it
+    // is always there, empty or not.
     return {
+      schemas: [db],
       relations: lower(rels.rows).map((r) => ({ ...r, oid: null, est_rows: String(r.est_rows) })),
       columns: lower(cols.rows).map((c) => ({ ...c, not_null: !!Number(c.not_null), is_pk: !!Number(c.is_pk) })),
       databases: await listDatabases(pool),

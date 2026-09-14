@@ -3,6 +3,23 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.26.0 — Make things from the tree
+*2026-09-14*
+
+Right-click to create a database, a schema or a table.
+
+### Added
+- New Table on a schema row. A small grid of columns - name, type, default, not null, primary key, and a flag for the key that counts itself up - with the CREATE TABLE underneath, rewritten as you type. It starts with an id column already filled in, because that is what you were going to add anyway.
+- New Database and New Schema on a connection row, and New Database again at the bottom of the database picker, which is where you go looking when the one you want is not on the server yet.
+- Drop Schema on a schema row, with Cascade for one that still has tables in it, and Drop Index on an index row. Both ask before doing it. A primary key index is not offered, because that belongs to the constraint and dropping it means dropping that instead.
+
+### Changed
+- Everything here works the way the other schema actions do: a form, the exact statement underneath rebuilt on every keystroke, and Copy SQL or Open in editor if you would rather run it yourself.
+
+### Fixed
+- A schema with nothing in it now appears in the tree. Schemas were worked out from the tables they contained, so a schema you had just created was invisible - exactly when you needed to right-click it to put a table in. The schema list now comes from the server directly.
+- Opening a connection now expands a schema that has tables in it. It always went for public first, which was right until empty schemas started appearing: a database whose public schema is empty would open on a schema showing nothing, which looks like a failure to load.
+
 ## 0.25.1 — Keywords capitalize as you type
 *2026-09-14*
 

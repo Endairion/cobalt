@@ -76,7 +76,12 @@ database to whatever network the laptop is on - and there is a test asserting th
 secrets are encrypted through `safeStorage` like the database password and never reach
 the renderer.
 
-**Databases.** One server usually holds more than one. The database name beside a live
+**Schema changes.** Right-click in the tree to make things: New Table on a schema (a
+column grid with the CREATE TABLE underneath), New Database and New Schema on a
+connection, Drop Schema and Drop Index where they belong. Every one shows the exact
+statement it will run, and offers to hand it to the editor instead.
+
+**Databases. One server usually holds more than one. The database name beside a live
 connection is a control: click it for any other database on that server, or use Open
 database on the connection's row menu. The choice is remembered. A database that turns
 out to be empty says so and lists the others rather than showing a blank sidebar.

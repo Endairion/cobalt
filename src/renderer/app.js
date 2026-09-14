@@ -367,8 +367,12 @@ async function loadSchema(connId) {
     conn.fks = null;          // re-read alongside the schema
     conn.objects = null;      // and so does the object catalogue
     if (!conn.expanded.size) {
-      const pub = tree.schemas.find((s) => s.name === 'public') || tree.schemas[0];
-      if (pub) conn.expanded.add(`schema:${pub.name}`);
+      // Open something with tables in it. Empty schemas are listed now, and a
+      // database whose public schema is empty would otherwise open on a schema
+      // showing nothing, which looks like a failure to load.
+      const used = tree.schemas.filter((s) => s.relations.length);
+      const first = used.find((s) => s.name === 'public') || used[0] || tree.schemas[0];
+      if (first) conn.expanded.add(`schema:${first.name}`);
     }
     renderSidebar();
     if (connId === state.activeConnId) editor.setSchema(tree);
@@ -443,7 +447,7 @@ function renderSidebar() {
 
       const key = `schema:${sch.name}`;
       const sopen = needle ? true : live.expanded.has(key);
-      out.push(`<div class="tree-row schema" data-conn-scope="${esc(live.id)}" data-toggle="${esc(key)}">
+      out.push(`<div class="tree-row schema" data-conn-scope="${esc(live.id)}" data-schema="${esc(sch.name)}" data-toggle="${esc(key)}" title="${esc(sch.name)} — right-click to add a table">
         <span class="twisty">${sopen ? '&#9662;' : '&#9656;'}</span>
         <span class="name">${esc(sch.name)}</span>
         <span class="meta">${relations.length}</span>
@@ -512,6 +516,15 @@ function openDatabasePicker(connId, anchorEl) {
       disabled: name === live.database,
       run: () => switchDatabase(connId, name),
     })),
+    { sep: true },
+    // Here because this is where you come looking when the one you want is not
+    // on the server yet.
+    ...schemaops.connectionMenuItems({
+      connId,
+      engine: live.engine || 'postgres',
+      readOnly: !!live.readOnly,
+      database: live.database,
+    }),
   ], anchorEl);
 }
 
@@ -590,7 +603,9 @@ function objectRows(live, schema, table) {
   };
 
   group('Indexes', t.indexes, (i) => `
-    <div class="tree-row object" title="${esc(i.definition || '')}">
+    <div class="tree-row object" data-conn-scope="${esc(live.id)}"
+         data-index="${esc(schema)}|${esc(table)}|${esc(i.name)}${i.primary ? '|pk' : ''}"
+         title="${esc(i.definition || '')}">
       <span class="kind idx">${i.primary ? 'PK' : i.unique ? 'UQ' : 'IX'}</span>
       <span class="name">${esc(i.name)}</span>
       <span class="meta">${esc(bytesShort(i.bytes))}</span>
@@ -908,6 +923,42 @@ el.tree.addEventListener('contextmenu', async (e) => {
         engine: conn.engine || 'postgres',
       }),
     ], relRow);
+    return;
+  }
+
+  const idxRow = e.target.closest('[data-index]');
+  if (idxRow) {
+    e.preventDefault();
+    const conn = state.conns.get(idxRow.dataset.connScope);
+    if (!conn) return;
+    const [schema, table, name, pk] = idxRow.dataset.index.split('|');
+    showMenu([
+      { header: name },
+      { label: 'Copy name', run: () => { api.ui.copy(name); toast('Copied.'); } },
+      { sep: true },
+      ...schemaops.indexMenuItems({
+        connId: conn.id, schema, table, name, primary: pk === 'pk',
+        readOnly: !!conn.readOnly, engine: conn.engine || 'postgres',
+      }),
+    ], idxRow);
+    return;
+  }
+
+  const schemaRow = e.target.closest('[data-schema]');
+  if (schemaRow) {
+    e.preventDefault();
+    const conn = state.conns.get(schemaRow.dataset.connScope);
+    if (!conn) return;
+    const schema = schemaRow.dataset.schema;
+    showMenu([
+      { header: schema },
+      { label: 'Copy name', run: () => { api.ui.copy(schema); toast('Copied.'); } },
+      { sep: true },
+      ...schemaops.schemaMenuItems({
+        connId: conn.id, schema,
+        readOnly: !!conn.readOnly, engine: conn.engine || 'postgres',
+      }),
+    ], schemaRow);
     return;
   }
 
@@ -2190,6 +2241,7 @@ connections.wire({
   disconnect,
   loadSchema,
   switchDatabase,
+  createMenuItems: (opts) => schemaops.connectionMenuItems(opts),
   duplicate: duplicateConnection,
   reorder: reorderConnections,
   deleteConnection,

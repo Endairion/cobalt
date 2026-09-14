@@ -335,7 +335,23 @@ const driver = {
     const dbs = await pool.query(
       'select datname from pg_database where datallowconn and not datistemplate order by datname'
     );
-    return { relations: rels.rows, columns: cols.rows, databases: dbs.rows.map((d) => d.datname) };
+
+    // Asked for separately rather than derived from the relations above,
+    // because a schema you have only just created has none yet — and that is
+    // exactly when you need to see it, to put something in it.
+    const schemas = await pool.query(`
+      select nspname as name from pg_namespace
+      where nspname not in ('pg_catalog','information_schema')
+        and nspname not like 'pg_toast%'
+        and nspname not like 'pg_temp%'
+      order by nspname`);
+
+    return {
+      relations: rels.rows,
+      columns: cols.rows,
+      databases: dbs.rows.map((d) => d.datname),
+      schemas: schemas.rows.map((r) => r.name),
+    };
   },
 
   async foreignKeys(pool) {

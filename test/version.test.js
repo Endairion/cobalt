@@ -98,7 +98,15 @@ test('CHANGELOG.md mentions every version', () => {
 
 console.log('\ngit tags');
 
-test('every release before the newest is tagged', () => {
+/**
+ * Once a version has been released, every version below it must be tagged: a
+ * gap there means a release went out and its tag was forgotten.
+ *
+ * Above the newest tag is the queue — versions written up and committed but
+ * not yet released, which is the normal state between releases. Those are not
+ * expected to be tagged, so this only checks from the newest tag downwards.
+ */
+test('no release below the newest tag is missing one', () => {
   let tags;
   try {
     tags = execFileSync('git', ['tag', '--list'], { cwd: path.join(__dirname, '..'), stdio: 'pipe' })
@@ -107,9 +115,14 @@ test('every release before the newest is tagged', () => {
     console.log('       (skipped — not a git repo)');
     return;
   }
-  // The newest version is tagged only once its commit lands, so allow it to be missing.
-  for (const r of releases.slice(1)) {
-    assert.ok(tags.includes(`v${r.version}`), `v${r.version} is tagged (tags: ${tags.join(', ') || 'none'})`);
+  const tagged = new Set(tags);
+  const newest = releases.findIndex((r) => tagged.has(`v${r.version}`));
+  if (newest === -1) {
+    console.log('       (skipped — nothing released yet)');
+    return;
+  }
+  for (const r of releases.slice(newest)) {
+    assert.ok(tagged.has(`v${r.version}`), `v${r.version} is tagged (tags: ${tags.join(', ') || 'none'})`);
   }
 });
 

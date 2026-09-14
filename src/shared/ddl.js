@@ -55,6 +55,20 @@ const DIALECTS = {
       `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${concurrently ? 'CONCURRENTLY ' : ''}${name}`,
     indexBody: ({ relName, method, cols }) =>
       `\n  ON ${relName}${method ? ` USING ${method}` : ''} (${cols})`,
+
+    // A schema is a thing of its own here, inside a database.
+    schemas: true,
+    identity: () => 'GENERATED ALWAYS AS IDENTITY',
+    createDatabase: ({ name, owner, encoding, template }) => {
+      const opts = [];
+      if (owner) opts.push(`OWNER ${owner}`);
+      if (template) opts.push(`TEMPLATE ${template}`);
+      if (encoding) opts.push(`ENCODING ${encoding}`);
+      return `CREATE DATABASE ${name}${opts.length ? `\n  ${opts.join(' ')}` : ''};`;
+    },
+    // MySQL wants the table; Postgres knows which one from the index itself.
+    dropIndex: ({ schema, name, concurrently, cascade }) =>
+      `DROP INDEX ${concurrently ? 'CONCURRENTLY ' : ''}${schema ? `${schema}.` : ''}${name}${cascade ? ' CASCADE' : ''};`,
   },
   mysql: {
     id: 'mysql',
@@ -73,6 +87,19 @@ const DIALECTS = {
     indexHead: ({ unique, name }) => `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${name}`,
     indexBody: ({ relName, method, cols }) =>
       `${method ? ` USING ${method}` : ''}\n  ON ${relName} (${cols})`,
+
+    // On MySQL a schema *is* a database — CREATE SCHEMA is a synonym — so
+    // offering both would be offering the same thing twice under two names.
+    schemas: false,
+    identity: () => 'AUTO_INCREMENT',
+    createDatabase: ({ name, charset, collation }) => {
+      const opts = [];
+      if (charset) opts.push(`CHARACTER SET ${charset}`);
+      if (collation) opts.push(`COLLATE ${collation}`);
+      return `CREATE DATABASE ${name}${opts.length ? `\n  ${opts.join(' ')}` : ''};`;
+    },
+    dropIndex: ({ schema, table, name }) =>
+      `DROP INDEX ${name} ON ${schema ? `${schema}.` : ''}${table};`,
   },
 };
 
@@ -218,8 +245,122 @@ function createIndex({
   return `${sql};`;
 }
 
+/* ----------------------------- databases ----------------------------- */
+
+/**
+ * A database is the one thing you cannot create from inside itself on some
+ * servers, and the one thing you certainly cannot create inside a transaction
+ * on Postgres. Both are the caller's problem; this only writes the statement.
+ */
+function createDatabase({ name, owner = '', encoding = '', template = '', charset = '', collation = '', engine } = {}) {
+  const d = dialect(engine);
+  const n = checkName(name, 'Database name');
+  return d.createDatabase({
+    name: d.q(n),
+    owner: owner.trim() ? d.q(owner.trim()) : '',
+    template: template.trim() ? d.q(template.trim()) : '',
+    encoding: encoding.trim() ? lit(encoding.trim()) : '',
+    charset: charset.trim() ? checkFragment(charset.trim(), 'Character set') : '',
+    collation: collation.trim() ? checkFragment(collation.trim(), 'Collation') : '',
+  });
+}
+
+function dropDatabase({ name, engine } = {}) {
+  const d = dialect(engine);
+  return `DROP DATABASE ${d.q(checkName(name, 'Database name'))};`;
+}
+
+/* ------------------------------ schemas ------------------------------ */
+
+function createSchema({ name, owner = '', engine } = {}) {
+  const d = dialect(engine);
+  const n = d.q(checkName(name, 'Schema name'));
+  const o = String(owner || '').trim();
+  return `CREATE SCHEMA ${n}${o ? ` AUTHORIZATION ${d.q(o)}` : ''};`;
+}
+
+function dropSchema({ name, cascade = false, engine } = {}) {
+  const d = dialect(engine);
+  const n = d.q(checkName(name, 'Schema name'));
+  return `DROP SCHEMA ${n}${cascade && d.cascade ? ' CASCADE' : ''};`;
+}
+
+/* ------------------------------- tables ------------------------------- */
+
+/**
+ * One column of a CREATE TABLE, in the order each engine wants its parts.
+ *
+ * `identity` is the "give me a key that counts itself up" flag rather than a
+ * spelling: Postgres writes GENERATED ALWAYS AS IDENTITY and MySQL writes
+ * AUTO_INCREMENT, which additionally has to be a key, which is why a column
+ * marked identity is marked primary too when nothing else is.
+ */
+function columnDef(d, { name, type, notNull = false, defaultExpr = '', identity = false, primaryKey = false }) {
+  const col = d.q(checkName(name, 'Column name'));
+  const t = checkFragment(type, 'Type');
+  const parts = [col, t];
+  if (identity) {
+    if (d.id === 'mysql') {
+      // MySQL puts NOT NULL AUTO_INCREMENT and takes no default.
+      parts.push('NOT NULL', d.identity());
+    } else {
+      parts.push(d.identity());
+    }
+  } else {
+    const def = String(defaultExpr || '').trim();
+    if (d.id === 'mysql') {
+      if (notNull) parts.push('NOT NULL');
+      if (def) parts.push(`DEFAULT ${checkFragment(def, 'Default')}`);
+    } else {
+      if (def) parts.push(`DEFAULT ${checkFragment(def, 'Default')}`);
+      if (notNull) parts.push('NOT NULL');
+    }
+  }
+  if (primaryKey) parts.push('PRIMARY KEY');
+  return `  ${parts.join(' ')}`;
+}
+
+/**
+ * columns: [{ name, type, notNull, defaultExpr, identity, primaryKey }]
+ *
+ * A single primary key column is written inline, which reads better. Two or
+ * more become a table-level PRIMARY KEY, because inline cannot say "these
+ * together".
+ */
+function createTable({ schema, table, columns = [], ifNotExists = false, engine } = {}) {
+  const d = dialect(engine);
+  const name = checkName(table, 'Table name');
+  const cols = columns.filter((c) => String(c && c.name || '').trim());
+  if (!cols.length) throw new Error('A table needs at least one column.');
+
+  const keys = cols.filter((c) => c.primaryKey || (c.identity && !cols.some((o) => o.primaryKey)));
+  const inlineKey = keys.length === 1 ? keys[0] : null;
+
+  const lines = cols.map((c) => columnDef(d, { ...c, primaryKey: c === inlineKey }));
+  if (keys.length > 1) {
+    lines.push(`  PRIMARY KEY (${keys.map((c) => d.q(c.name)).join(', ')})`);
+  }
+
+  const head = `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${relOf(d, schema, name)}`;
+  return `${head} (\n${lines.join(',\n')}\n);`;
+}
+
+/* ------------------------------ indexes ------------------------------ */
+
+function dropIndex({ schema, table, name, concurrently = false, cascade = false, engine } = {}) {
+  const d = dialect(engine);
+  return d.dropIndex({
+    schema: schema ? d.q(schema) : '',
+    table: table ? d.q(table) : '',
+    name: d.q(checkName(name, 'Index name')),
+    concurrently: concurrently && d.concurrently,
+    cascade: cascade && d.cascade,
+  });
+}
+
 module.exports = {
   q, rel, lit, checkFragment, checkName, quoterFor, dialect,
+  createDatabase, dropDatabase, createSchema, dropSchema, createTable, dropIndex,
   addColumn, dropColumn, renameColumn, alterColumnType, setNotNull, setDefault,
   renameTable, dropTable, truncateTable,
   createIndex, defaultIndexName,

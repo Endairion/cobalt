@@ -169,6 +169,279 @@ function openOp({ title, subtitle, fields, build, runLabel = 'Run', danger = fal
   }
 }
 
+/* ---------------------------- the table maker ---------------------------- */
+
+const KEY_TYPE = { postgres: 'bigint', mysql: 'bigint' };
+const STAMP_TYPE = { postgres: 'timestamptz', mysql: 'datetime' };
+const STAMP_DEFAULT = { postgres: 'now()', mysql: 'CURRENT_TIMESTAMP' };
+
+/** What a new table starts as, so the common case is already typed in. */
+const startingColumns = (engine) => [
+  { name: 'id', type: KEY_TYPE[engine] || 'bigint', notNull: false, defaultExpr: '', identity: true, primaryKey: false },
+  { name: '', type: '', notNull: false, defaultExpr: '', identity: false, primaryKey: false },
+];
+
+/**
+ * CREATE TABLE, which is the one action that does not fit the shared dialog:
+ * it is a list of things rather than a fixed set of boxes. Same contract
+ * otherwise — the statement underneath is rebuilt on every keystroke and is
+ * exactly what runs.
+ */
+export function openCreateTable({ connId, schema, engine = 'postgres', after }) {
+  const node = document.createElement('div');
+  node.className = 'modal schema-op create-table';
+  const types = typesFor(engine);
+
+  let cols = startingColumns(engine);
+
+  node.innerHTML = `
+    <h2>New table in ${esc(schema)}</h2>
+    <div class="body">
+      <div class="op-sub">Columns can be changed afterwards; this is only what the table starts as.</div>
+      <div class="field"><label>Name</label>
+        <input type="text" id="ct-name" placeholder="orders" spellcheck="false" /></div>
+      <div class="field">
+        <label>Columns</label>
+        <div class="ct-head">
+          <span>Name</span><span>Type</span><span>Default</span>
+          <span title="Not null">NN</span>
+          <span title="Primary key">PK</span>
+          <span title="Counts itself up: ${engine === 'mysql' ? 'AUTO_INCREMENT' : 'GENERATED ALWAYS AS IDENTITY'}">AI</span>
+          <span></span>
+        </div>
+        <div class="ct-rows" id="ct-rows"></div>
+        <div class="ct-actions">
+          <button class="btn small ghost" data-ct="add">Add column</button>
+          <span class="hint">a column marked AI is the key unless you tick another</span>
+        </div>
+      </div>
+      <label class="op-check"><input type="checkbox" id="ct-ine" />
+        <span>Only if it does not exist</span><span class="hint">IF NOT EXISTS</span></label>
+      <div class="field"><label>Statement</label><pre class="op-sql" id="op-sql"></pre></div>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" data-op="copy">Copy SQL</button>
+      <button class="btn ghost" data-op="editor">Open in editor</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" data-op="cancel">Cancel</button>
+      <button class="btn primary" data-op="run">Create table</button>
+    </div>
+    <datalist id="ct-types">${types.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>`;
+
+  const close = ctx.showOverlay(node);
+  const sqlEl = node.querySelector('#op-sql');
+  const rowsEl = node.querySelector('#ct-rows');
+  const runBtn = node.querySelector('[data-op="run"]');
+  let current = null;
+
+  const drawRows = () => {
+    rowsEl.innerHTML = cols.map((c, i) => `
+      <div class="ct-row" data-i="${i}">
+        <input type="text" data-c="name" value="${esc(c.name)}" placeholder="column" spellcheck="false" />
+        <input type="text" data-c="type" value="${esc(c.type)}" placeholder="type" list="ct-types" spellcheck="false" />
+        <input type="text" data-c="defaultExpr" value="${esc(c.defaultExpr)}" placeholder="—" spellcheck="false"
+               ${c.identity ? 'disabled title="a column that counts itself up has no default"' : ''} />
+        <input type="checkbox" data-c="notNull" ${c.notNull ? 'checked' : ''} ${c.identity ? 'disabled' : ''} />
+        <input type="checkbox" data-c="primaryKey" ${c.primaryKey ? 'checked' : ''} />
+        <input type="checkbox" data-c="identity" ${c.identity ? 'checked' : ''} />
+        <button class="btn small ghost ct-del" data-ct="del" title="Remove this column"
+                ${cols.length < 2 ? 'disabled' : ''}>&times;</button>
+      </div>`).join('');
+  };
+
+  const read = () => {
+    [...rowsEl.querySelectorAll('.ct-row')].forEach((row, i) => {
+      for (const el of row.querySelectorAll('[data-c]')) {
+        cols[i][el.dataset.c] = el.type === 'checkbox' ? el.checked : el.value;
+      }
+    });
+  };
+
+  const preview = () => {
+    try {
+      current = ddl.createTable({
+        schema,
+        table: node.querySelector('#ct-name').value,
+        columns: cols,
+        ifNotExists: node.querySelector('#ct-ine').checked,
+        engine,
+      });
+      sqlEl.textContent = current;
+      sqlEl.classList.remove('err');
+      runBtn.disabled = false;
+    } catch (err) {
+      current = null;
+      sqlEl.textContent = err.message;
+      sqlEl.classList.add('err');
+      runBtn.disabled = true;
+    }
+  };
+
+  drawRows();
+  preview();
+  setTimeout(() => node.querySelector('#ct-name').focus(), 0);
+
+  node.addEventListener('input', () => { read(); preview(); });
+  node.addEventListener('change', (e) => {
+    read();
+    // Ticking AI rewrites the row, so it has to be redrawn rather than just read.
+    if (e.target.dataset && e.target.dataset.c === 'identity') drawRows();
+    preview();
+  });
+
+  node.addEventListener('click', async (e) => {
+    const ct = e.target.closest('[data-ct]');
+    if (ct) {
+      read();
+      if (ct.dataset.ct === 'add') {
+        cols.push({ name: '', type: '', notNull: false, defaultExpr: '', identity: false, primaryKey: false });
+      } else {
+        const i = Number(ct.closest('.ct-row').dataset.i);
+        cols = cols.filter((_, n) => n !== i);
+      }
+      drawRows();
+      preview();
+      return;
+    }
+
+    const b = e.target.closest('[data-op]');
+    if (!b) return;
+    if (b.dataset.op === 'cancel') { close(); return; }
+    if (b.dataset.op === 'copy') { if (current) { ctx.copy(current); ctx.toast('Copied.'); } return; }
+    if (b.dataset.op === 'editor') { if (current) { close(); ctx.openSql(current, connId); } return; }
+    if (b.dataset.op !== 'run' || !current) return;
+
+    runBtn.disabled = true;
+    try {
+      const res = await ctx.runDdl(connId, current);
+      close();
+      ctx.toast(`${res && res.command ? res.command : 'Done'} · ${res && res.elapsedMs != null ? `${res.elapsedMs} ms` : 'ok'}`);
+      await ctx.refresh(connId);
+      if (after) after();
+    } catch (err) {
+      sqlEl.textContent = err.message;
+      sqlEl.classList.add('err');
+      runBtn.disabled = false;
+    }
+  });
+}
+
+/* ------------------------- databases and schemas ------------------------- */
+
+/** What a connection row offers: the things that live above a schema. */
+export function connectionMenuItems({ connId, engine = 'postgres', readOnly, database }) {
+  const d = ddl.dialect(engine);
+  const items = [{
+    label: 'New Database…',
+    disabled: !!readOnly,
+    run: () => openOp({
+      connId,
+      title: 'New database',
+      subtitle: engine === 'mysql'
+        ? 'A database on this server. On MySQL this is the same thing as a schema.'
+        : 'A database on this server. It starts empty; open it to put anything in it.',
+      fields: engine === 'mysql' ? [
+        { id: 'name', label: 'Name', kind: 'text', placeholder: 'shop' },
+        { id: 'charset', label: 'Character set', kind: 'text', value: 'utf8mb4', hint: 'leave as it is unless you know you want otherwise' },
+        { id: 'collation', label: 'Collation', kind: 'text', value: 'utf8mb4_unicode_ci' },
+      ] : [
+        { id: 'name', label: 'Name', kind: 'text', placeholder: 'shop' },
+        { id: 'owner', label: 'Owner', kind: 'text', placeholder: 'leave empty for you' },
+        { id: 'template', label: 'Template', kind: 'text', placeholder: 'leave empty for template1' },
+      ],
+      build: (v) => ddl.createDatabase({ ...v, engine }),
+      runLabel: 'Create database',
+    }),
+  }];
+
+  if (d.schemas) {
+    items.push({
+      label: 'New Schema…',
+      disabled: !!readOnly,
+      run: () => openOp({
+        connId,
+        title: `New schema in ${database || 'this database'}`,
+        subtitle: 'A named group of tables inside the database you are in.',
+        fields: [
+          { id: 'name', label: 'Name', kind: 'text', placeholder: 'billing' },
+          { id: 'owner', label: 'Owner', kind: 'text', placeholder: 'leave empty for you' },
+        ],
+        build: (v) => ddl.createSchema({ ...v, engine }),
+        runLabel: 'Create schema',
+      }),
+    });
+  }
+
+  return items;
+}
+
+/** What a schema row offers. */
+export function schemaMenuItems({ connId, schema, engine = 'postgres', readOnly }) {
+  const d = ddl.dialect(engine);
+  const items = [{
+    label: 'New Table…',
+    disabled: !!readOnly,
+    run: () => openCreateTable({ connId, schema, engine }),
+  }];
+
+  if (d.schemas) {
+    items.push({ sep: true });
+    items.push({
+      label: 'Drop Schema…',
+      danger: true,
+      disabled: !!readOnly,
+      run: () => openOp({
+        connId,
+        title: `Drop schema ${schema}`,
+        subtitle: 'An empty schema goes quietly. One with tables in it needs Cascade, which takes them too.',
+        fields: [{ id: 'cascade', label: 'Cascade', kind: 'check', hint: 'also drops everything inside it' }],
+        build: (v) => ddl.dropSchema({ name: schema, ...v, engine }),
+        runLabel: 'Drop schema',
+        danger: true,
+        confirm: {
+          title: 'Drop schema',
+          message: `Drop ${schema}?`,
+          confirmLabel: 'Drop it',
+          destructive: true,
+        },
+      }),
+    });
+  }
+
+  return items;
+}
+
+/** What an index row offers. */
+export function indexMenuItems({ connId, schema, table, name, engine = 'postgres', readOnly, primary }) {
+  const d = ddl.dialect(engine);
+  return [{
+    label: 'Drop Index…',
+    danger: true,
+    // A primary key's index belongs to the constraint; dropping it means
+    // dropping that, which is a different statement and a different question.
+    disabled: !!readOnly || !!primary,
+    run: () => openOp({
+      connId,
+      title: `Drop index ${name}`,
+      subtitle: primary
+        ? 'This index backs a primary key.'
+        : 'Queries that were using it will still work; they will just be slower.',
+      fields: d.concurrently
+        ? [{ id: 'concurrently', label: 'Concurrently', kind: 'check', hint: 'does not lock the table, but cannot run in a transaction' }]
+        : [],
+      build: (v) => ddl.dropIndex({ schema, table, name, ...v, engine }),
+      runLabel: 'Drop index',
+      danger: true,
+      confirm: {
+        title: 'Drop index',
+        message: `Drop ${name}?`,
+        confirmLabel: 'Drop it',
+        destructive: true,
+      },
+    }),
+  }];
+}
+
 /* ------------------------------ table menu ------------------------------ */
 
 /** Menu entries for a table, view or matview in the sidebar. */

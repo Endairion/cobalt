@@ -906,7 +906,7 @@ class Manager {
    */
   async schemaTree(id) {
     const conn = this.get(id);
-    const { relations, columns, databases } = await conn.driver.schemaTree(conn.pool);
+    const { relations, columns, databases, schemas: schemaNames } = await conn.driver.schemaTree(conn.pool);
 
     const byTable = new Map();
     for (const c of columns) {
@@ -919,6 +919,9 @@ class Manager {
     }
 
     const schemas = new Map();
+    // Seeded from the server's own list so an empty schema still has a row in
+    // the tree; the relations below only fill them in.
+    for (const name of schemaNames || []) schemas.set(name, []);
     for (const r of relations) {
       if (!schemas.has(r.schema)) schemas.set(r.schema, []);
       schemas.get(r.schema).push({

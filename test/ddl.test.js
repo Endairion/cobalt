@@ -241,4 +241,155 @@ check('a typed fragment is checked on either engine', () => {
   throws(() => d.addColumn({ ...my, name: 'c', type: 'text; drop table x' }), /semicolon/i);
 });
 
+console.log('\ndatabases and schemas');
+
+check('a database with nothing said about it', () => {
+  assert.strictEqual(d.createDatabase({ name: 'shop' }), 'CREATE DATABASE shop;');
+});
+
+check('and one with the options spelled out', () => {
+  assert.strictEqual(
+    d.createDatabase({ name: 'shop', owner: 'app', template: 'template0', encoding: 'UTF8' }),
+    "CREATE DATABASE shop\n  OWNER app TEMPLATE template0 ENCODING 'UTF8';");
+});
+
+check('MySQL takes a character set instead of an owner', () => {
+  assert.strictEqual(
+    d.createDatabase({ name: 'shop', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci', engine: 'mysql' }),
+    'CREATE DATABASE shop\n  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
+});
+
+check('a name that needs quoting gets it', () => {
+  assert.strictEqual(d.createDatabase({ name: 'my db' }), 'CREATE DATABASE "my db";');
+  assert.strictEqual(d.createDatabase({ name: 'my db', engine: 'mysql' }), 'CREATE DATABASE `my db`;');
+});
+
+check('dropping one', () => {
+  assert.strictEqual(d.dropDatabase({ name: 'old' }), 'DROP DATABASE old;');
+});
+
+check('a schema, with and without an owner', () => {
+  assert.strictEqual(d.createSchema({ name: 'billing' }), 'CREATE SCHEMA billing;');
+  assert.strictEqual(d.createSchema({ name: 'billing', owner: 'app' }),
+    'CREATE SCHEMA billing AUTHORIZATION app;');
+});
+
+check('dropping a schema, with and without CASCADE', () => {
+  assert.strictEqual(d.dropSchema({ name: 'billing' }), 'DROP SCHEMA billing;');
+  assert.strictEqual(d.dropSchema({ name: 'billing', cascade: true }), 'DROP SCHEMA billing CASCADE;');
+});
+
+// MySQL has no schemas separate from databases, so CASCADE has nothing to mean.
+check('MySQL leaves CASCADE off a schema drop', () => {
+  assert.strictEqual(d.dropSchema({ name: 'billing', cascade: true, engine: 'mysql' }),
+    'DROP SCHEMA billing;');
+});
+
+check('a missing name is refused rather than producing CREATE DATABASE ;', () => {
+  throws(() => d.createDatabase({ name: '' }), /Database name is required/);
+  throws(() => d.createSchema({ name: '   ' }), /Schema name is required/);
+});
+
+console.log('\ncreating a table');
+
+check('the shape of it', () => {
+  assert.strictEqual(d.createTable({
+    schema: 'shop',
+    table: 'people',
+    columns: [
+      { name: 'id', type: 'bigint', identity: true },
+      { name: 'email', type: 'text', notNull: true },
+      { name: 'created_at', type: 'timestamptz', defaultExpr: 'now()', notNull: true },
+    ],
+  }), [
+    'CREATE TABLE shop.people (',
+    '  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,',
+    '  email text NOT NULL,',
+    '  created_at timestamptz DEFAULT now() NOT NULL',
+    ');',
+  ].join('\n'));
+});
+
+// AUTO_INCREMENT has to be a key and cannot have a default, and MySQL wants
+// NOT NULL before DEFAULT — the same ordering the ALTER statements use.
+check('MySQL writes the same table its own way', () => {
+  assert.strictEqual(d.createTable({
+    schema: 'shop',
+    table: 'people',
+    engine: 'mysql',
+    columns: [
+      { name: 'id', type: 'bigint', identity: true },
+      { name: 'email', type: 'varchar(255)', notNull: true, defaultExpr: "'x'" },
+    ],
+  }), [
+    'CREATE TABLE shop.people (',
+    '  id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,',
+    "  email varchar(255) NOT NULL DEFAULT 'x'",
+    ');',
+  ].join('\n'));
+});
+
+check('one key column is written inline, two become a table constraint', () => {
+  const two = d.createTable({
+    schema: 's', table: 'link',
+    columns: [
+      { name: 'a', type: 'int', primaryKey: true },
+      { name: 'b', type: 'int', primaryKey: true },
+    ],
+  });
+  assert.ok(/  PRIMARY KEY \(a, b\)/.test(two), two);
+  assert.ok(!/int PRIMARY KEY/.test(two), 'neither column claims the key on its own');
+});
+
+check('a column that counts itself up is the key unless another one claims it', () => {
+  const claimed = d.createTable({
+    schema: 's', table: 't',
+    columns: [
+      { name: 'id', type: 'bigint', identity: true },
+      { name: 'code', type: 'text', primaryKey: true },
+    ],
+  });
+  assert.ok(/code text PRIMARY KEY/.test(claimed), claimed);
+  assert.ok(!/IDENTITY PRIMARY KEY/.test(claimed), 'the identity column steps aside');
+});
+
+check('IF NOT EXISTS when asked for', () => {
+  const sql = d.createTable({
+    schema: 's', table: 't', ifNotExists: true,
+    columns: [{ name: 'a', type: 'int' }],
+  });
+  assert.ok(sql.startsWith('CREATE TABLE IF NOT EXISTS s.t ('), sql);
+});
+
+check('blank rows are ignored, but a table of nothing but blanks is refused', () => {
+  const sql = d.createTable({
+    schema: 's', table: 't',
+    columns: [{ name: 'a', type: 'int' }, { name: '', type: '' }],
+  });
+  assert.strictEqual((sql.match(/\n/g) || []).length, 2, sql);
+  throws(() => d.createTable({ schema: 's', table: 't', columns: [{ name: ' ', type: '' }] }),
+    /at least one column/i);
+});
+
+check('a typed fragment is checked here too', () => {
+  throws(() => d.createTable({
+    schema: 's', table: 't', columns: [{ name: 'a', type: 'int; drop table x' }],
+  }), /semicolon/i);
+});
+
+console.log('\ndropping an index');
+
+check('Postgres names the schema, MySQL names the table', () => {
+  assert.strictEqual(d.dropIndex({ schema: 'shop', name: 'orders_idx' }), 'DROP INDEX shop.orders_idx;');
+  assert.strictEqual(d.dropIndex({ schema: 'shop', table: 'orders', name: 'orders_idx', engine: 'mysql' }),
+    'DROP INDEX orders_idx ON shop.orders;');
+});
+
+check('CONCURRENTLY where it exists, and left out where it does not', () => {
+  assert.strictEqual(d.dropIndex({ schema: 's', name: 'i', concurrently: true }),
+    'DROP INDEX CONCURRENTLY s.i;');
+  assert.ok(!/CONCURRENTLY/.test(
+    d.dropIndex({ schema: 's', table: 't', name: 'i', concurrently: true, engine: 'mysql' })));
+});
+
 console.log(`\n${process.exitCode ? 'failures above' : `all ${n} checks passed`}\n`);
