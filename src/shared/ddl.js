@@ -46,15 +46,15 @@ const DIALECTS = {
     restartIdentity: true,
     usingCast: true,
     alterType: ({ relName, col, type, using }) =>
-      `alter table ${relName}\n  alter column ${col} type ${type}${using ? `\n  using ${using}` : ''};`,
+      `ALTER TABLE ${relName}\n  ALTER COLUMN ${col} TYPE ${type}${using ? `\n  USING ${using}` : ''};`,
     setNotNull: ({ relName, col, notNull }) =>
-      `alter table ${relName}\n  alter column ${col} ${notNull ? 'set' : 'drop'} not null;`,
+      `ALTER TABLE ${relName}\n  ALTER COLUMN ${col} ${notNull ? 'SET' : 'DROP'} NOT NULL;`,
     addColumnTail: ({ type, def, notNull }) =>
-      `${type}${def ? ` default ${def}` : ''}${notNull ? ' not null' : ''}`,
+      `${type}${def ? ` DEFAULT ${def}` : ''}${notNull ? ' NOT NULL' : ''}`,
     indexHead: ({ unique, concurrently, name }) =>
-      `create ${unique ? 'unique ' : ''}index ${concurrently ? 'concurrently ' : ''}${name}`,
+      `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${concurrently ? 'CONCURRENTLY ' : ''}${name}`,
     indexBody: ({ relName, method, cols }) =>
-      `\n  on ${relName}${method ? ` using ${method}` : ''} (${cols})`,
+      `\n  ON ${relName}${method ? ` USING ${method}` : ''} (${cols})`,
   },
   mysql: {
     id: 'mysql',
@@ -64,15 +64,15 @@ const DIALECTS = {
     restartIdentity: false,
     usingCast: false,
     alterType: ({ relName, col, type }) =>
-      `alter table ${relName}\n  modify column ${col} ${type};`,
+      `ALTER TABLE ${relName}\n  MODIFY COLUMN ${col} ${type};`,
     // MODIFY restates the column, so the type has to come along for the ride.
     setNotNull: ({ relName, col, notNull, currentType }) =>
-      `alter table ${relName}\n  modify column ${col} ${currentType || 'text'}${notNull ? ' not null' : ' null'};`,
+      `ALTER TABLE ${relName}\n  MODIFY COLUMN ${col} ${currentType || 'text'}${notNull ? ' NOT NULL' : ' NULL'};`,
     addColumnTail: ({ type, def, notNull }) =>
-      `${type}${notNull ? ' not null' : ''}${def ? ` default ${def}` : ''}`,
-    indexHead: ({ unique, name }) => `create ${unique ? 'unique ' : ''}index ${name}`,
+      `${type}${notNull ? ' NOT NULL' : ''}${def ? ` DEFAULT ${def}` : ''}`,
+    indexHead: ({ unique, name }) => `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${name}`,
     indexBody: ({ relName, method, cols }) =>
-      `${method ? ` using ${method}` : ''}\n  on ${relName} (${cols})`,
+      `${method ? ` USING ${method}` : ''}\n  ON ${relName} (${cols})`,
   },
 };
 
@@ -115,18 +115,18 @@ function addColumn({ schema, table, name, type, notNull = false, defaultExpr = '
     def: raw ? checkFragment(raw, 'Default') : '',
     notNull,
   });
-  return `alter table ${relOf(d, schema, table)}\n  add column ${d.q(col)} ${tail};`;
+  return `ALTER TABLE ${relOf(d, schema, table)}\n  ADD COLUMN ${d.q(col)} ${tail};`;
 }
 
 function dropColumn({ schema, table, name, cascade = false, engine }) {
   const d = dialect(engine);
-  const suffix = cascade && d.cascade ? ' cascade' : '';
-  return `alter table ${relOf(d, schema, table)}\n  drop column ${d.q(checkName(name, 'Column name'))}${suffix};`;
+  const suffix = cascade && d.cascade ? ' CASCADE' : '';
+  return `ALTER TABLE ${relOf(d, schema, table)}\n  DROP COLUMN ${d.q(checkName(name, 'Column name'))}${suffix};`;
 }
 
 function renameColumn({ schema, table, name, to, engine }) {
   const d = dialect(engine);
-  return `alter table ${relOf(d, schema, table)}\n  rename column ${d.q(checkName(name, 'Column name'))} to ${d.q(checkName(to, 'New name'))};`;
+  return `ALTER TABLE ${relOf(d, schema, table)}\n  RENAME COLUMN ${d.q(checkName(name, 'Column name'))} TO ${d.q(checkName(to, 'New name'))};`;
 }
 
 function alterColumnType({ schema, table, name, type, using = '', engine }) {
@@ -156,28 +156,28 @@ function setDefault({ schema, table, name, defaultExpr, engine }) {
   const col = d.q(checkName(name, 'Column name'));
   const def = String(defaultExpr == null ? '' : defaultExpr).trim();
   return def
-    ? `alter table ${relName}\n  alter column ${col} set default ${checkFragment(def, 'Default')};`
-    : `alter table ${relName}\n  alter column ${col} drop default;`;
+    ? `ALTER TABLE ${relName}\n  ALTER COLUMN ${col} SET DEFAULT ${checkFragment(def, 'Default')};`
+    : `ALTER TABLE ${relName}\n  ALTER COLUMN ${col} DROP DEFAULT;`;
 }
 
 /* ------------------------------- tables ------------------------------- */
 
 function renameTable({ schema, table, to, engine }) {
   const d = dialect(engine);
-  return `alter table ${relOf(d, schema, table)}\n  rename to ${d.q(checkName(to, 'New name'))};`;
+  return `ALTER TABLE ${relOf(d, schema, table)}\n  RENAME TO ${d.q(checkName(to, 'New name'))};`;
 }
 
 function dropTable({ schema, table, kind = 'r', cascade = false, engine }) {
   const d = dialect(engine);
-  const what = kind === 'v' ? 'view' : kind === 'm' ? 'materialized view' : 'table';
-  return `drop ${what} ${relOf(d, schema, table)}${cascade && d.cascade ? ' cascade' : ''};`;
+  const what = kind === 'v' ? 'VIEW' : kind === 'm' ? 'MATERIALIZED VIEW' : 'TABLE';
+  return `DROP ${what} ${relOf(d, schema, table)}${cascade && d.cascade ? ' CASCADE' : ''};`;
 }
 
 function truncateTable({ schema, table, restartIdentity = false, cascade = false, engine }) {
   const d = dialect(engine);
-  let sql = `truncate table ${relOf(d, schema, table)}`;
-  if (restartIdentity && d.restartIdentity) sql += ' restart identity';
-  if (cascade && d.cascade) sql += ' cascade';
+  let sql = `TRUNCATE TABLE ${relOf(d, schema, table)}`;
+  if (restartIdentity && d.restartIdentity) sql += ' RESTART IDENTITY';
+  if (cascade && d.cascade) sql += ' CASCADE';
   return `${sql};`;
 }
 
@@ -214,7 +214,7 @@ function createIndex({
     cols: colSql,
   });
   const w = String(where || '').trim();
-  if (w) sql += `\n  where ${checkFragment(w, 'WHERE clause')}`;
+  if (w) sql += `\n  WHERE ${checkFragment(w, 'WHERE clause')}`;
   return `${sql};`;
 }
 

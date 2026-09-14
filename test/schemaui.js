@@ -173,9 +173,9 @@ const HELP = `
   })()`);
   if (!add.ok) fails++;
   const a = readJs(add.out);
-  expect(a.bare === 'alter table shop.tmp_ops\n  add column nickname text;',
+  expect(a.bare === 'ALTER TABLE shop.tmp_ops\n  ADD COLUMN nickname text;',
     `the preview is the statement that will run (got ${JSON.stringify(a.bare)})`);
-  expect(a.full === "alter table shop.tmp_ops\n  add column nickname text default 'none' not null;",
+  expect(a.full === "ALTER TABLE shop.tmp_ops\n  ADD COLUMN nickname text DEFAULT 'none' NOT NULL;",
     `and it updates as you type (got ${JSON.stringify(a.full)})`);
   expect(/semicolon/i.test(a.refused.msg || '') && a.refused.disabled === true,
     `a semicolon in the type is refused and Run is disabled (got "${a.refused.msg}")`);
@@ -217,9 +217,9 @@ const HELP = `
     `every column is offered (got ${JSON.stringify(i.listed)})`);
   expect(/at least one column/i.test(i.emptyMsg || ''),
     `with nothing ticked it says so rather than showing broken SQL (got "${i.emptyMsg}")`);
-  expect(i.oneCol === 'create index tmp_ops_name_idx\n  on shop.tmp_ops (name);',
+  expect(i.oneCol === 'CREATE INDEX tmp_ops_name_idx\n  ON shop.tmp_ops (name);',
     `the name follows the Postgres convention (got ${JSON.stringify(i.oneCol)})`);
-  expect((i.uniq || '').startsWith('create unique index tmp_ops_name_key'),
+  expect((i.uniq || '').startsWith('CREATE UNIQUE INDEX tmp_ops_name_key'),
     `ticking Unique changes the name too (got ${JSON.stringify(i.uniq)})`);
 
   const indexes = await sql("select indexname from pg_indexes where schemaname='shop' and tablename='tmp_ops'");
@@ -253,7 +253,7 @@ const HELP = `
   expect((c.labels || []).includes('Drop NOT NULL') || (c.labels || []).includes('Set NOT NULL'),
     `and the NOT NULL entry reflects the current state (got ${JSON.stringify(c.labels)})`);
   expect(c.seeded === 'note', `the rename box starts on the current name (got "${c.seeded}")`);
-  expect(c.preview === 'alter table shop.tmp_ops\n  rename column note to memo;',
+  expect(c.preview === 'ALTER TABLE shop.tmp_ops\n  RENAME COLUMN note TO memo;',
     `the preview is right (got ${JSON.stringify(c.preview)})`);
 
   const after = await columnsOf('tmp_ops');

@@ -195,12 +195,12 @@ const HELP = `
   const dd = readJs(ddl.out);
   expect((dd.types || []).includes('varchar(255)') && !(dd.types || []).includes('jsonb'),
     `the type list is MySQL's (got ${JSON.stringify((dd.types || []).slice(0, 4))})`);
-  expect(/add column nickname varchar\(255\)/.test(dd.addSql || ''),
+  expect(/ADD COLUMN nickname varchar\(255\)/.test(dd.addSql || ''),
     `Add Column defaults to a MySQL type (got ${JSON.stringify(dd.addSql)})`);
-  expect(/modify column full_name/.test(dd.typeSql || ''),
+  expect(/MODIFY COLUMN full_name/.test(dd.typeSql || ''),
     `Change Type is MODIFY COLUMN (got ${JSON.stringify(dd.typeSql)})`);
   expect(dd.hasUsing === false, 'and there is no USING box, which MySQL has no use for');
-  expect(dd.dropSql === 'drop table cobalt.customers;',
+  expect(dd.dropSql === 'DROP TABLE cobalt.customers;',
     `Drop has no CASCADE (got ${JSON.stringify(dd.dropSql)})`);
   expect(dd.hasCascade === false, 'and no Cascade tickbox either');
 

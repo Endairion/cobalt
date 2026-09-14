@@ -13,6 +13,18 @@
 
 const releases = [
   {
+    version: '0.25.0',
+    date: '2026-09-14',
+    title: 'Keywords in capitals',
+    summary: 'SQL that Cobalt writes now capitalizes its keywords.',
+    changes: [
+      { type: 'changed', text: 'The formatter capitalizes keywords instead of lowercasing them. Capitals separate the shape of a statement from its nouns at a glance, which is most of what formatting is for. Lower case is still there as an option in the formatter, and identifiers are never re-cased either way.' },
+      { type: 'changed', text: 'The same goes for every statement Cobalt writes for you: the SELECT it opens a table with, the WHERE it builds when you follow a foreign key or click through from a search, the ALTER TABLE and CREATE INDEX the schema actions preview, the INSERT statements a SQL export produces, and the EXPLAIN label over a plan.' },
+      { type: 'changed', text: 'Copy DDL already did this, so the app was disagreeing with itself depending on which button you pressed.' },
+      { type: 'added', text: 'The formatter now knows the words the schema actions emit - FUNCTION, RETURNS, LANGUAGE, MATERIALIZED, CONCURRENTLY, IDENTITY and the rest - so generated DDL reads the same once it has been through the formatter. Words that double as common function names, like replace and if, are deliberately left out.' },
+    ],
+  },
+  {
     version: '0.24.0',
     date: '2026-09-14',
     title: 'The app asks its own questions',

@@ -107,7 +107,7 @@ const HELP = `
   if (!travel.ok) fails++;
   const t = readJs(travel.out);
   expect(t.tabs === 2, `it opened a new tab (got ${t.tabs})`);
-  expect(/from shop\.customers/.test(t.sql || ''), `on the referenced table (got "${(t.sql || '').replace(/\n/g, ' ')}")`);
+  expect(/FROM shop\.customers/.test(t.sql || ''), `on the referenced table (got "${(t.sql || '').replace(/\n/g, ' ')}")`);
   expect(t.rows === 1, `showing exactly the referenced row (got ${t.rows})`);
   expect(String(t.landedId) === String(t.customerId),
     `and it is the right row (${t.landedId} vs ${t.customerId})`);
@@ -138,7 +138,7 @@ const HELP = `
   expect((b.items || []).some((t2) => /Referenced by/i.test(t2)),
     `a "referenced by" section appears (got ${JSON.stringify(b.items)})`);
   expect(b.had === true, 'orders is listed as referencing customers');
-  expect(/from shop\.orders/.test(b.sql || ''), `it opened the child table (got "${(b.sql || '').replace(/\n/g, ' ')}")`);
+  expect(/FROM shop\.orders/.test(b.sql || ''), `it opened the child table (got "${(b.sql || '').replace(/\n/g, ' ')}")`);
   expect(b.rows > 0, `with the matching rows (got ${b.rows})`);
   expect(String(b.firstCustomer) === String(b.parentId),
     `all belonging to that parent (${b.firstCustomer} vs ${b.parentId})`);

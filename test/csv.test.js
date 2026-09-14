@@ -171,14 +171,14 @@ check('column names and values are quoted properly', () => {
     [{ name: 'id', dataTypeID: 20 }, { name: 'order', dataTypeID: 25 }],
     [['1', "O'Brien"]],
     { schema: 'shop', table: 'customers' });
-  assert.ok(out.includes('insert into shop.customers (id, "order") values'), out);
+  assert.ok(out.includes('INSERT INTO shop.customers (id, "order") VALUES'), out);
   assert.ok(out.includes(`(1, 'O''Brien')`), out);
 });
 
 check('NULL and booleans are literals, not strings', () => {
   const out = ex.toSqlInserts(
     [{ name: 'a', dataTypeID: 25 }, { name: 'b', dataTypeID: 16 }], [[null, 't']], {});
-  assert.ok(out.includes('(null, true)'), out);
+  assert.ok(out.includes('(NULL, TRUE)'), out);
 });
 
 check('a numeric is quoted so its scale survives the round trip', () => {
@@ -189,7 +189,7 @@ check('a numeric is quoted so its scale survives the round trip', () => {
 check('rows are batched into several statements', () => {
   const rows = Array.from({ length: 250 }, (_, i) => [String(i)]);
   const out = ex.toSqlInserts([{ name: 'n', dataTypeID: 20 }], rows, { batch: 100 });
-  assert.strictEqual((out.match(/insert into/g) || []).length, 3);
+  assert.strictEqual((out.match(/INSERT INTO/g) || []).length, 3);
 });
 
 check('no rows says so instead of writing a broken statement', () => {

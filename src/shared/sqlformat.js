@@ -11,8 +11,10 @@
  * property worth guarding; the exact indentation is taste.
  *
  * Keyword case is normalized because a formatter that leaves `SELECT` and
- * `select` side by side has not really done the job. Identifiers are never
- * touched: on a case-sensitive quoted name that would be a rename.
+ * `select` side by side has not really done the job. Upper is the default:
+ * capitals separate the shape of a statement from its nouns at a glance, which
+ * is most of what formatting is for. Identifiers are never touched: on a
+ * case-sensitive quoted name that would be a rename.
  */
 
 const { splitStatements } = require('../main/sqlsplit.js');
@@ -28,7 +30,13 @@ const KEYWORDS = new Set(['select', 'from', 'where', 'group', 'by', 'having', 'o
   'foreign', 'references', 'constraint', 'default', 'column', 'add', 'rename', 'to', 'cascade',
   'restrict', 'begin', 'commit', 'rollback', 'asc', 'desc', 'nulls', 'first', 'last', 'over',
   'partition', 'window', 'filter', 'within', 'fetch', 'next', 'rows', 'only', 'conflict', 'do',
-  'nothing', 'explain', 'analyze', 'truncate', 'grant', 'revoke', 'cast', 'array', 'any', 'some']);
+  'nothing', 'explain', 'analyze', 'truncate', 'grant', 'revoke', 'cast', 'array', 'any', 'some',
+  // The words the schema actions emit, so generated DDL reads the same as
+  // anything else once it has been through here. Nothing that doubles as a
+  // common function name (replace, if, coalesce) belongs in this list.
+  'function', 'procedure', 'trigger', 'sequence', 'schema', 'database', 'materialized',
+  'returns', 'language', 'temporary', 'concurrently', 'restart', 'identity', 'generated',
+  'always', 'modify', 'natural', 'collate', 'escape']);
 
 /** Words that start a clause, so they go on a line of their own. */
 const CLAUSE_STARTERS = new Set(['select', 'from', 'where', 'having', 'union', 'intersect',
@@ -180,7 +188,7 @@ const significant = (tokens) => tokens.filter((t) => t.kind !== 'space');
 const lower = (t) => t.text.toLowerCase();
 const isKeyword = (t) => t && t.kind === 'word' && KEYWORDS.has(lower(t));
 
-function format(sql, { indent = '  ', keywordCase = 'lower', maxInlineList = 72 } = {}) {
+function format(sql, { indent = '  ', keywordCase = 'upper', maxInlineList = 72 } = {}) {
   const tokens = tokenize(String(sql == null ? '' : sql));
   const code = significant(tokens);
   if (!code.length) return String(sql == null ? '' : sql).trim();

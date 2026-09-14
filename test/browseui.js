@@ -156,7 +156,7 @@ const HELP = `
   if (!asQuery.ok) fails++;
   const q = readJs(asQuery.out);
   expect(q.editor === true, 'the editor comes back');
-  expect(/from shop\.customers/.test(q.sql || ''), `carrying the statement (got "${(q.sql || '').replace(/\n/g, ' ')}")`);
+  expect(/FROM shop\.customers/.test(q.sql || ''), `carrying the statement (got "${(q.sql || '').replace(/\n/g, ' ')}")`);
   expect(q.headShown === false, 'and the browse header goes away');
   expect(q.rowsKept === 200, 'the rows already fetched stay on screen');
 

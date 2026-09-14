@@ -3,6 +3,19 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.25.0 — Keywords in capitals
+*2026-09-14*
+
+SQL that Cobalt writes now capitalizes its keywords.
+
+### Added
+- The formatter now knows the words the schema actions emit - FUNCTION, RETURNS, LANGUAGE, MATERIALIZED, CONCURRENTLY, IDENTITY and the rest - so generated DDL reads the same once it has been through the formatter. Words that double as common function names, like replace and if, are deliberately left out.
+
+### Changed
+- The formatter capitalizes keywords instead of lowercasing them. Capitals separate the shape of a statement from its nouns at a glance, which is most of what formatting is for. Lower case is still there as an option in the formatter, and identifiers are never re-cased either way.
+- The same goes for every statement Cobalt writes for you: the SELECT it opens a table with, the WHERE it builds when you follow a foreign key or click through from a search, the ALTER TABLE and CREATE INDEX the schema actions preview, the INSERT statements a SQL export produces, and the EXPLAIN label over a plan.
+- Copy DDL already did this, so the app was disagreeing with itself depending on which button you pressed.
+
 ## 0.24.0 — The app asks its own questions
 *2026-09-14*
 

@@ -72,10 +72,10 @@ function toJson(columns, rows, { indent = 2 } = {}) {
 
 /** One value, as a SQL literal. */
 function sqlLiteral(v, column = {}) {
-  if (v === null || v === undefined) return 'null';
+  if (v === null || v === undefined) return 'NULL';
   const s = String(v);
   const kind = kindOf(column);
-  if (kind === 'bool') return s === 't' || s === 'true' || s === '1' ? 'true' : 'false';
+  if (kind === 'bool') return s === 't' || s === 'true' || s === '1' ? 'TRUE' : 'FALSE';
   // Everything else is written as a quoted literal and left for the server to
   // cast on the way in — including numbers, so a numeric keeps its scale.
   if (kind === 'int' && /^-?\d+$/.test(s)) return s;
@@ -93,7 +93,7 @@ function toSqlInserts(columns, rows, { schema = 'public', table = 'table_name', 
   for (let i = 0; i < rows.length; i += batch) {
     const chunk = rows.slice(i, i + batch);
     const values = chunk.map((r) => `  (${columns.map((c, n) => sqlLiteral(r[n], c)).join(', ')})`);
-    out.push(`insert into ${rel} (${cols}) values\n${values.join(',\n')};`);
+    out.push(`INSERT INTO ${rel} (${cols}) VALUES\n${values.join(',\n')};`);
   }
   return `${out.join('\n\n')}\n`;
 }

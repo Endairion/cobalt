@@ -924,7 +924,7 @@ el.filter.addEventListener('input', () => {
 });
 
 function openTableTab(schema, name, connId) {
-  const sql = `select *\nfrom ${qrel(schema, name)};`;
+  const sql = `SELECT *\nFROM ${qrel(schema, name)};`;
   newTab({ title: name, sql, run: true, kind: 'data', connId: connId || state.activeConnId });
 }
 
@@ -1215,17 +1215,17 @@ async function markForeignKeys(tab) {
 }
 
 const literal = (v) => (v === null || v === undefined
-  ? 'null'
+  ? 'NULL'
   : `'${String(v).replace(/'/g, "''")}'`);
 
 const whereFor = (cols, values) => cols
   .map((c, i) => (values[i] === null || values[i] === undefined
-    ? `${qid(c)} is null`
+    ? `${qid(c)} IS NULL`
     : `${qid(c)} = ${literal(values[i])}`))
-  .join('\n  and ');
+  .join('\n  AND ');
 
 function openRelated({ tab, schema, table, columns, values, title }) {
-  const sql = `select *\nfrom ${qrel(schema, table)}\nwhere ${whereFor(columns, values)};`;
+  const sql = `SELECT *\nFROM ${qrel(schema, table)}\nWHERE ${whereFor(columns, values)};`;
   newTab({ title, sql, run: true, kind: 'data', connId: tab.connId });
 }
 
@@ -1578,7 +1578,7 @@ function browseTabFor(connId) {
  * occupy the screen to look at a table.
  */
 function browseTable(schema, table, connId) {
-  const sql = `select *\nfrom ${qrel(schema, table)};`;
+  const sql = `SELECT *\nFROM ${qrel(schema, table)};`;
   const existing = browseTabFor(connId);
   const tab = existing || newTab({ connId, kind: 'data', title: table, sql });
 
@@ -1806,7 +1806,7 @@ function renderResults() {
     return;
   }
   if (res.kind === 'plan') {
-    el.gridToolbar.innerHTML = `<span class="pill">${res.analyze ? 'explain analyze' : 'explain'}</span>`;
+    el.gridToolbar.innerHTML = `<span class="pill">${res.analyze ? 'EXPLAIN ANALYZE' : 'EXPLAIN'}</span>`;
     perf.renderPlan(el.gridHost, res);
     return;
   }

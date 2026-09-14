@@ -78,22 +78,22 @@ console.log('\nlayout');
 check('each clause starts a line, with its continuation indented', () => {
   assert.strictEqual(
     format('select a, b from t where x = 1'),
-    'select a,\n  b\nfrom t\nwhere x = 1');
+    'SELECT a,\n  b\nFROM t\nWHERE x = 1');
 });
 
 check('AND and OR line up under the condition', () => {
   const out = format('select a from t where x = 1 and y = 2 or z = 3');
-  assert.ok(/\n  and y = 2\n  or z = 3/.test(out), out);
+  assert.ok(/\n  AND y = 2\n  OR z = 3/.test(out), out);
 });
 
 check('a join and its ON each get a line', () => {
   const out = format('select a from t left join u on u.id = t.id');
-  assert.ok(/\nleft join u\n  on u\.id = t\.id/.test(out), out);
+  assert.ok(/\nLEFT JOIN u\n  ON u\.id = t\.id/.test(out), out);
 });
 
 check('left( is a function call, not a join', () => {
   const out = format("select left(name, 3) from t");
-  assert.ok(!/\nleft/.test(out), out);
+  assert.ok(!/\nLEFT/.test(out), out);
 });
 
 check('qualified names and casts do not get spaces', () => {
@@ -104,7 +104,7 @@ check('qualified names and casts do not get spaces', () => {
 
 check('a short parenthesised list stays on one line', () => {
   const out = format('select * from t where id in (1, 2, 3)');
-  assert.ok(out.includes('id in (1, 2, 3)'), out);
+  assert.ok(out.includes('id IN (1, 2, 3)'), out);
 });
 
 check('a long list is broken up', () => {
@@ -113,16 +113,16 @@ check('a long list is broken up', () => {
   assert.ok(out.split('\n').length > 10, `expected it to wrap:\n${out}`);
 });
 
-check('keywords are lowercased, identifiers are not', () => {
-  const out = format('SELECT UserName FROM Accounts WHERE Id = 1');
-  assert.ok(out.includes('select'), out);
+check('keywords are capitalized, identifiers are not', () => {
+  const out = format('select UserName from Accounts where Id = 1');
+  assert.ok(out.includes('SELECT'), out);
   assert.ok(out.includes('UserName'), 'the column name must keep its case');
   assert.ok(out.includes('Accounts'), 'the table name must keep its case');
 });
 
-check('upper case is available for people who like it', () => {
-  const out = format('select a from t', { keywordCase: 'upper' });
-  assert.ok(out.startsWith('SELECT'), out);
+check('lower case is available for people who like it', () => {
+  const out = format('SELECT a FROM t', { keywordCase: 'lower' });
+  assert.ok(out.startsWith('select'), out);
 });
 
 check('a quoted identifier is never re-cased', () => {
@@ -132,14 +132,14 @@ check('a quoted identifier is never re-cased', () => {
 
 check('insert and values read as a statement', () => {
   const out = format("insert into t (a, b) values (1, 'x')");
-  assert.ok(/^insert into/.test(out), out);
-  assert.ok(/\nvalues/.test(out), out);
+  assert.ok(/^INSERT INTO/.test(out), out);
+  assert.ok(/\nVALUES/.test(out), out);
 });
 
 check('group by and order by are treated as one clause each', () => {
   const out = format('select a, count(*) from t group by a order by a desc');
-  assert.ok(/\ngroup by a/.test(out), out);
-  assert.ok(/\norder by a desc/.test(out), out);
+  assert.ok(/\nGROUP BY a/.test(out), out);
+  assert.ok(/\nORDER BY a DESC/.test(out), out);
   assert.ok(out.includes('count(*)'), 'nothing is separated from the paren it opens');
 });
 
@@ -194,12 +194,12 @@ console.log('\nscripts');
 
 check('every statement is formatted, with a gap between them', () => {
   const out = formatScript('select a from t; select b from u;');
-  assert.ok(/;\n\nselect/.test(out), out);
+  assert.ok(/;\n\nSELECT/.test(out), out);
 });
 
 check('a function body is not split on its inner semicolons', () => {
   const out = formatScript("create function f() returns void as $$ select 1; select 2; $$ language sql;");
-  assert.strictEqual((out.match(/create function/g) || []).length, 1, out);
+  assert.strictEqual((out.match(/CREATE FUNCTION/g) || []).length, 1, out);
 });
 
 check('empty input comes back empty rather than throwing', () => {

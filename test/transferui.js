@@ -124,7 +124,7 @@ const HELP = `
     `CSV starts with the header row (got ${JSON.stringify((e.csv || '').slice(0, 40))})`);
   expect(/^\[\n\s+\{/.test(e.json || '') && /"label": "precision"/.test(e.json || ''),
     `JSON is an array of objects (got ${JSON.stringify((e.json || '').slice(0, 40))})`);
-  expect(/^insert into shop\.docs \(id, label/.test(e.sqlText || ''),
+  expect(/^INSERT INTO shop\.docs \(id, label/.test(e.sqlText || ''),
     `SQL names the source table (got ${JSON.stringify((e.sqlText || '').slice(0, 45))})`);
   expect(/^\| id \| label \|/.test(e.md || ''), `Markdown is a table (got ${JSON.stringify((e.md || '').slice(0, 30))})`);
 

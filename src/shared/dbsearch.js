@@ -124,6 +124,10 @@ function buildSearchQuery({
  * A WHERE expression that finds the matching rows, for opening the table with
  * the filter already applied. The needle goes in as a literal because the
  * filter bar takes an expression, not parameters.
+ *
+ * Keywords are capitalized here and not in buildSearchQuery above, because this
+ * one is read: it lands in the filter bar for you to edit. That one is only
+ * ever sent to the server.
  */
 function buildRowFilter({ dialect, column, needle, mode = 'contains', caseSensitive = false }) {
   const d = dialect;
@@ -136,9 +140,9 @@ function buildRowFilter({ dialect, column, needle, mode = 'contains', caseSensit
   const pattern = mode === 'starts' ? `${esc}%` : `%${esc}%`;
   const op = caseSensitive ? 'like' : d.mapOperator('ilike');
   if (!caseSensitive && op === 'like') {
-    return `lower(${asText}) like lower(${lit(pattern)}) escape '${LIKE_ESCAPE}'`;
+    return `lower(${asText}) LIKE lower(${lit(pattern)}) ESCAPE '${LIKE_ESCAPE}'`;
   }
-  return `${asText} ${op} ${lit(pattern)} escape '${LIKE_ESCAPE}'`;
+  return `${asText} ${op.toUpperCase()} ${lit(pattern)} ESCAPE '${LIKE_ESCAPE}'`;
 }
 
 /** Which columns of a relation are worth searching, in order. */

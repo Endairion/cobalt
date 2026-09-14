@@ -74,8 +74,8 @@ const HELP = `
   })()`);
   if (!one.ok) fails++;
   const o = readJs(one.out);
-  expect(o.after === 'select a,\n  b\nfrom t\nwhere x = 1\n  and y = 2',
-    `it is laid out and lowercased (got ${JSON.stringify(o.after)})`);
+  expect(o.after === 'SELECT a,\n  b\nFROM t\nWHERE x = 1\n  AND y = 2',
+    `it is laid out and capitalized (got ${JSON.stringify(o.after)})`);
 
   console.log('\nonly the statement under the caret is touched');
 
@@ -94,10 +94,10 @@ const HELP = `
   })()`);
   if (!scoped.ok) fails++;
   const sc = readJs(scoped.out);
-  expect(/^select 1;\n\nselect a,/.test(sc.after || ''),
+  expect(/^select 1;\n\nSELECT a,/.test(sc.after || ''),
     `the first statement and the blank line under it survive (got ${JSON.stringify((sc.after || '').slice(0, 24))})`);
   expect(/select 3;$/.test((sc.after || '').trim()), 'and so is the last');
-  expect(/select a,\n  b\nfrom t;/.test(sc.after || ''),
+  expect(/SELECT a,\n  b\nFROM t;/.test(sc.after || ''),
     `while the one under the caret is formatted (got ${JSON.stringify(sc.after)})`);
 
   console.log('\nformatting a whole script');
@@ -113,7 +113,7 @@ const HELP = `
   })()`);
   if (!all.ok) fails++;
   const a = readJs(all.out);
-  expect(/^select 1;\n\nselect a,/.test(a.after || ''),
+  expect(/^SELECT 1;\n\nSELECT a,/.test(a.after || ''),
     `each statement is formatted with a gap between them (got ${JSON.stringify(a.after)})`);
   expect(/2 statements/.test(a.statements || ''),
     `and the split still finds both (got "${a.statements}")`);
@@ -160,7 +160,7 @@ const HELP = `
   if (!runs.ok) fails++;
   const r = readJs(runs.out);
   // Function names are not keywords, so their case is left alone on purpose.
-  expect(/^select COUNT\(\*\)/.test(r.formatted || ''),
+  expect(/^SELECT COUNT\(\*\)/.test(r.formatted || ''),
     `count(*) is not pulled apart, and keeps its case (got ${JSON.stringify((r.formatted || '').slice(0, 20))})`);
   expect(r.rows === 1 && Number(r.cell) > 0,
     `and the formatted statement runs (got ${r.rows} rows, ${JSON.stringify(r.cell)})`);
