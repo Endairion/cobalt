@@ -340,6 +340,7 @@ node test/formatui.js     # formatting one statement, a script, and what it leav
 node test/healthui.js     # the health panel on both engines, and what it counts
 node test/searchui.js     # searching, what it reports, and opening a hit
 node test/objectsui.js    # indexes, keys, triggers, functions and sequences in the tree
+node test/emptydbui.js    # an empty database explains itself, and switching to a real one
 node test/accelui.js      # every shortcut pressed for real, with text selected
 
 node test/package.test.js  # 15 checks: what ships, and what an upgrade keeps

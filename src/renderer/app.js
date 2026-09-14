@@ -423,6 +423,12 @@ function renderSidebar() {
     if (!open || !live) continue;
     if (!live.tree) { out.push('<div class="tree-row loading">loading schema...</div>'); continue; }
 
+    const anyRelations = live.tree.schemas.some((x) => x.relations.length);
+    if (!anyRelations && !needle) {
+      out.push(emptyDatabaseRows(live));
+      continue;
+    }
+
     for (const sch of live.tree.schemas) {
       const relations = needle
         ? sch.relations.filter((r) =>
@@ -474,6 +480,53 @@ function renderSidebar() {
 }
 
 const kindLabel = (k) => ({ r: 'T', p: 'P', v: 'V', m: 'MV', f: 'F' }[k] || '?');
+
+/**
+ * A connection can succeed and still show nothing, because it opened a database
+ * that happens to be empty — `postgres` is the usual one, since it is the
+ * default in the connection dialog and exists on every server. A blank sidebar
+ * with a green dot beside it is a confusing way to find that out, so say it,
+ * and list what else is on the server.
+ */
+function emptyDatabaseRows(live) {
+  const here = live.database || '';
+  const others = (live.tree.databases || []).filter((d) => d !== here);
+  const out = [`<div class="db-empty">
+    <div class="db-empty-head">No tables in <strong>${esc(here)}</strong>.</div>`];
+
+  if (others.length) {
+    out.push(`<div class="db-empty-sub">This server also has:</div>`);
+    for (const d of others) {
+      out.push(`<button class="db-switch" data-switchdb="${esc(live.id)}|${esc(d)}"
+        title="Reconnect ${esc(live.name)} to ${esc(d)} and remember it">${esc(d)}</button>`);
+    }
+  } else {
+    out.push('<div class="db-empty-sub">There are no other databases on this server.</div>');
+  }
+  out.push('</div>');
+  return out.join('');
+}
+
+/**
+ * Point a saved connection at a different database and reopen it. The choice is
+ * saved, because having to make it twice would be the annoying half of this.
+ */
+async function switchDatabase(connId, database) {
+  const live = state.conns.get(connId);
+  if (!live) return;
+  const saved = state.saved.find((x) => x.id === live.savedId);
+  if (!saved) { toast('That connection is not saved any more.', 'err'); return; }
+  try {
+    // The password is left out on purpose: undefined means "keep the stored one".
+    await api.connections.save({ ...saved, password: undefined, database });
+    await refreshSaved();
+    await disconnect(connId);
+    await connect(saved.id);
+    toast(`${saved.name} now opens ${database}.`, 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
 
 const bytesShort = (n) => {
   const v = Number(n);
@@ -685,6 +738,14 @@ function approx(n) {
 
 el.tree.addEventListener('click', async (e) => {
   if (e.target.closest('[data-newconn]')) { openConnectionDialog(null); return; }
+
+  const swap = e.target.closest('[data-switchdb]');
+  if (swap) {
+    e.stopPropagation();
+    const [connId, database] = swap.dataset.switchdb.split('|');
+    await switchDatabase(connId, database);
+    return;
+  }
 
   const menuBtn = e.target.closest('[data-connmenu]');
   if (menuBtn) {

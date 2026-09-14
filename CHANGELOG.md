@@ -3,6 +3,20 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.22.1 — An empty database now says so
+*2026-09-14*
+
+Connecting to the wrong database looked exactly like a broken sidebar.
+
+### Added
+- The sidebar now says which database is empty and lists the others on that server. Clicking one reconnects to it and remembers the choice, so you do not have to make it again next launch - the stored password is kept.
+
+### Changed
+- The list of databases on a server was already being fetched with the schema and then thrown away. It is what the hint is built from.
+
+### Fixed
+- A connection that opened a database with no tables showed a green dot beside a blank sidebar and no explanation. That is easy to end up in: the connection dialog defaults the Database field to postgres, which exists on every server and is almost always empty, so leaving it alone connects perfectly to nothing.
+
 ## 0.22.0 — One installer
 *2026-09-14*
 

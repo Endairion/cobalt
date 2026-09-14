@@ -13,6 +13,17 @@
 
 const releases = [
   {
+    version: '0.22.1',
+    date: '2026-09-14',
+    title: 'An empty database now says so',
+    summary: 'Connecting to the wrong database looked exactly like a broken sidebar.',
+    changes: [
+      { type: 'fixed', text: 'A connection that opened a database with no tables showed a green dot beside a blank sidebar and no explanation. That is easy to end up in: the connection dialog defaults the Database field to postgres, which exists on every server and is almost always empty, so leaving it alone connects perfectly to nothing.' },
+      { type: 'added', text: 'The sidebar now says which database is empty and lists the others on that server. Clicking one reconnects to it and remembers the choice, so you do not have to make it again next launch - the stored password is kept.' },
+      { type: 'changed', text: 'The list of databases on a server was already being fetched with the schema and then thrown away. It is what the hint is built from.' },
+    ],
+  },
+  {
     version: '0.22.0',
     date: '2026-09-14',
     title: 'One installer',

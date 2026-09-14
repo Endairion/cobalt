@@ -1391,3 +1391,17 @@ tr.best .bar-fill { background: var(--green); }
 .tree-row .kind.trg { color: var(--green); background: rgba(69, 192, 125, .14); }
 .tree-row .kind.fn  { color: var(--text-dim); background: var(--bg-raised); }
 .tree-row .kind.seq { color: var(--text-dim); background: var(--bg-raised); }
+
+/* ------------------------ an empty database ------------------------ */
+
+.db-empty { padding: 8px 12px 12px 22px; }
+.db-empty-head { color: var(--text-dim); font-size: 12px; }
+.db-empty-head strong { color: var(--text); font-family: var(--mono); }
+.db-empty-sub { color: var(--text-faint); font-size: 11px; margin: 6px 0 5px; }
+.db-switch {
+  display: inline-block; margin: 0 4px 4px 0; padding: 2px 8px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  background: var(--panel); color: var(--accent-text);
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+}
+.db-switch:hover { border-color: var(--accent); background: var(--accent-soft); }
