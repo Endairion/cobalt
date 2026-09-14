@@ -48,11 +48,26 @@ const seed = () => {
 /** The realistic state: caret in the editor, a word selected. */
 const PREP = "document.querySelector('.cm-content').focus(); window.__cobaltSelect(7, 9)";
 
+/**
+ * Give the app a moment to act on the keystroke rather than reading once and
+ * calling it dead. Returns as soon as the answer is yes.
+ */
+const POLLER = `
+  const untilTrue = async (fn, ms = 4000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      try { if (fn()) return true; } catch { /* not ready yet */ }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    return false;
+  };
+`;
+
 const press = (file, keys, probe) => new Promise((resolve) => {
   const profile = seed();
   const p = spawn(electron, ['.', `--smoke=${path.join(outDir, file)}`,
     `--user-data-dir=${profile}`, `--smoke-prep=${PREP}`,
-    `--smoke-keys=${keys}`, `--smoke-js=${probe}`], { cwd: path.join(__dirname, '..') });
+    `--smoke-keys=${keys}`, `--smoke-js=${POLLER}${probe}`], { cwd: path.join(__dirname, '..') });
   let buf = '';
   p.stdout.on('data', (d) => { buf += d; });
   p.stderr.on('data', (d) => { buf += d; });
@@ -88,11 +103,13 @@ const SKIP = new Set(['tab:close', 'file:open', 'file:save', 'query:cancel']);
 (async () => {
   console.log('\nthe one that was reported, with text selected');
 
-  const one = await press('acc-activity.png', 'Control+Shift+L', `(() => ({
-    last: window.__cobaltLastCommand || null,
-    panel: !!document.querySelector('.process-modal'),
-    selected: window.__cobalt() && true
-  }))()`);
+  const one = await press('acc-activity.png', 'Control+Shift+L', `(async () => {
+    await untilTrue(() => window.__cobaltLastCommand === 'server:processes');
+    return {
+      last: window.__cobaltLastCommand || null,
+      panel: !!document.querySelector('.process-modal')
+    };
+  })()`);
   if (!one.ok) fails++;
   const o = readJs(one.out);
   expect(o.last === 'server:processes',
@@ -110,27 +127,46 @@ const SKIP = new Set(['tab:close', 'file:open', 'file:save', 'query:cancel']);
   }
   console.log(`  (${targets.length} shortcuts, each in its own run)`);
 
+  // Each press needs the window in the foreground, and Windows does not always
+  // grant that to the thirtieth app launched in a row. So a shortcut gets a few
+  // attempts: a genuinely dead one fails all of them, which is what the five
+  // CodeMirror was eating did, every time, across every run.
+  const MAX_TRIES = 5;
+  const attempt = async (item, probe, ok) => {
+    let tries = 0;
+    for (; tries < MAX_TRIES; tries++) {
+      const r = await press(`acc-${item.id.replace(/:/g, '-')}.png`, toKeys(item.accel), probe);
+      const got = readJs(r.out);
+      if (ok(got)) return { got, tries: tries + 1 };
+      // Let the desktop settle before asking for the foreground again.
+      await new Promise((r2) => setTimeout(r2, 400));
+    }
+    return { got: null, tries };
+  };
+
   for (const item of targets) {
     const effect = BY_EFFECT[item.id];
+    const condition = effect ? effect.probe : `window.__cobaltLastCommand === ${JSON.stringify(item.id)}`;
     const probe = effect
-      ? `(() => ({ ok: ${effect.probe} }))()`
-      : '(() => ({ last: window.__cobaltLastCommand || null }))()';
-    const r = await press(`acc-${item.id.replace(/:/g, '-')}.png`, toKeys(item.accel), probe);
-    const got = readJs(r.out);
+      ? `(async () => ({ ok: await untilTrue(() => ${effect.probe}) }))()`
+      : `(async () => { await untilTrue(() => ${condition}); return { last: window.__cobaltLastCommand || null }; })()`;
+    const wanted = effect ? (g) => g.ok === true : (g) => g.last === item.id;
+    const { got, tries } = await attempt(item, probe, wanted);
     const label = formatAccel(item.accel, 'win32');
+    const note = tries > 1 && got ? ` (took ${tries} presses)` : '';
     if (effect) {
-      expect(got.ok === true, `${label} — ${effect.what} (${item.id})`);
+      expect(!!got, `${label} — ${effect.what} (${item.id})${note}`);
     } else {
-      expect(got.last === item.id,
-        `${label} runs ${item.id}${got.last === item.id ? '' : ` (got ${JSON.stringify(got.last)})`}`);
+      expect(!!got, `${label} runs ${item.id}${got ? note : ` — no response in ${MAX_TRIES} presses`}`);
     }
   }
 
   console.log('\nand the editor keeps what belongs to a text box');
 
-  const editing = await press('acc-editing.png', 'Control+Backspace', `(() => ({
-    sql: window.__cobaltGetSql(), last: window.__cobaltLastCommand || null
-  }))()`);
+  const editing = await press('acc-editing.png', 'Control+Backspace', `(async () => {
+    await untilTrue(() => window.__cobaltGetSql() !== ${JSON.stringify(SQL)});
+    return { sql: window.__cobaltGetSql(), last: window.__cobaltLastCommand || null };
+  })()`);
   const e = readJs(editing.out);
   expect(e.sql !== SQL,
     `Ctrl+Backspace still deletes a word rather than being taken by the menu (got ${JSON.stringify(e.sql)})`);

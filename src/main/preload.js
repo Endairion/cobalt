@@ -62,6 +62,9 @@ contextBridge.exposeInMainWorld('cobalt', {
   },
   app: {
     engines: () => call('app:engines'),
+    checkUpdates: () => call('app:checkUpdates'),
+    releasesPage: () => call('app:releasesPage'),
+    updateStatus: () => call('app:updateStatus'),
     metrics: () => call('app:metrics'),
     info: () => call('app:info'),
     role: (name) => call('app:role', name),
@@ -88,6 +91,7 @@ contextBridge.exposeInMainWorld('cobalt', {
   ui: {
     confirm: (opts) => call('dialog:confirm', opts),
     copy: (text) => call('clipboard:write', text),
+    onUpdateStatus: (fn) => ipcRenderer.on('update:status', (_e, payload) => fn(payload)),
     onMenu: (fn) => {
       const listener = (_e, cmd) => fn(cmd);
       ipcRenderer.on('menu', listener);

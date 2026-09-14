@@ -3,6 +3,20 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.22.0 — One installer
+*2026-09-14*
+
+A single Cobalt-Setup.exe, and updates that install over the top.
+
+### Added
+- npm run dist builds one file - dist/Cobalt-Setup-<version>.exe - which installs per user with Start-menu and desktop shortcuts and asks for no administrator rights.
+- Updating means running the newer installer. NSIS matches the existing install by application id and replaces it in place: there is no uninstall step and nothing to remove first. Saved connections, workspace and query history live in %APPDATA%\cobalt, which the installer never touches - and uninstalling leaves them too, so reinstalling picks up where you left off.
+- Help, Check for Updates asks the GitHub releases of this repository whether there is anything newer. It downloads in the background, says so in the status bar, and installs when you quit - never mid-session, since that is the only moment Windows will let a program replace its own files. A quiet check runs a few seconds after launch and stays silent unless there is news.
+- An app icon, drawn by a script rather than checked in as a binary nobody can edit.
+
+### Fixed
+- The smoke runner shows its window inactive so a test run does not steal focus, but a menu accelerator only fires for the focused window - so the shortcut test could not reliably press anything. It now takes the foreground properly for that one case, and retries a press the window never received rather than calling the shortcut dead.
+
 ## 0.21.1 — Shortcuts that actually fire
 *2026-09-13*
 

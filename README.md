@@ -228,6 +228,63 @@ In the grid: arrows/Tab move, `Enter` or typing edits, `Esc` cancels, `Ctrl+0` s
 NULL, `Ctrl+C` copies the cell. Click a header to sort the loaded page, drag its right
 edge to resize. Double-click a table in the sidebar to open it; right-click for DDL.
 
+## Installing
+
+```bash
+npm run dist
+```
+
+writes one file, `dist/Cobalt-Setup-<version>.exe`. Run it and Cobalt installs per user
+into `%LOCALAPPDATA%\Programs\Cobalt` with Start-menu and desktop shortcuts - no admin
+prompt, and nothing else to install.
+
+`npm run pack` builds `dist/win-unpacked/Cobalt.exe` without an installer, which is
+quicker when you only want to check the packaged app runs.
+
+### Updating without uninstalling
+
+Run the newer `Cobalt-Setup-<version>.exe`. NSIS matches the install by its application
+id and replaces the program files in place - there is no uninstall step, and nothing to
+remove first. Your saved connections, workspace and query history live in
+`%APPDATA%\Cobalt`, which the installer never touches; uninstalling leaves them too
+(`deleteAppDataOnUninstall` is off), so reinstalling picks up where you left off.
+
+The app can also fetch its own updates. Help → Check for Updates asks the GitHub releases
+of this repository whether there is a newer version; it downloads in the background, says
+so in the status bar, and installs when you quit - never mid-session, because that is the
+only moment Windows will let a program replace its own files. There is a quiet check a
+few seconds after launch, which stays silent unless there is something new.
+
+Publishing a release is what makes an update visible:
+
+```bash
+npm version patch          # or minor, then regenerate CHANGELOG.md
+npm run changelog
+GH_TOKEN=... npm run dist:publish
+```
+
+That uploads the installer and `latest.yml` to a GitHub release. `latest.yml` is the file
+the updater reads, so an installer uploaded without it will never be offered.
+
+A development checkout is not an installed copy, so Check for Updates says so rather than
+pretending. Nothing is ever installed silently.
+
+### Building on a clean Windows machine
+
+electron-builder downloads a code-signing bundle that contains macOS symlinks, and Windows
+refuses to create those without Developer Mode or an elevated shell - the build fails while
+extracting, before it reaches anything of ours. Either turn on Developer Mode
+(Settings → System → For developers), or unpack it once by hand:
+
+```bash
+CACHE="$LOCALAPPDATA/electron-builder/Cache/winCodeSign"
+./node_modules/7zip-bin/win/x64/7za.exe x -snld -y "$CACHE"/*.7z -o"$CACHE/winCodeSign-2.6.0" -xr'!darwin'
+```
+
+Cobalt is not code-signed, so Windows SmartScreen will warn the first time you run the
+installer - "More info" then "Run anyway". Signing it needs a certificate, which is a
+purchase rather than a setting.
+
 ## Tests
 
 ```bash
@@ -284,6 +341,8 @@ node test/healthui.js     # the health panel on both engines, and what it counts
 node test/searchui.js     # searching, what it reports, and opening a hit
 node test/objectsui.js    # indexes, keys, triggers, functions and sequences in the tree
 node test/accelui.js      # every shortcut pressed for real, with text selected
+
+node test/package.test.js  # 15 checks: what ships, and what an upgrade keeps
 node test/menuprobe.js    # fires every menu command and reports what each did
 ```
 
@@ -327,6 +386,7 @@ src/main/
   sqlsplit.js   statement splitter (shared with the renderer)
   store.js      saved connections + workspace, safeStorage encryption
   tunnel.js     SSH port forwarding, bound to loopback only
+  updates.js    checking GitHub releases, installing on quit
 src/renderer/
   app.js        state, sidebar, tabs, results, dialogs, palette
   connections.js  connection manager, row menu, tab connection picker

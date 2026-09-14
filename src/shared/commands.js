@@ -108,6 +108,8 @@ const MENU = [
   {
     label: 'Help',
     items: [
+      { id: 'help:update', label: 'Check for Updates…' },
+      { sep: true },
       { id: 'help:whatsnew', label: "What's New" },
       { id: 'help:changelog', label: 'Version History' },
       { sep: true },

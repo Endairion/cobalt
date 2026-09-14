@@ -1,7 +1,7 @@
 {
   "name": "cobalt",
-  "version": "0.21.1",
-  "description": "Cobalt - a fast PostgreSQL editor",
+  "version": "0.22.0",
+  "description": "Cobalt - a fast SQL editor for PostgreSQL and MySQL",
   "main": "src/main/main.js",
   "scripts": {
     "build": "esbuild src/renderer/app.js --bundle --outfile=src/renderer/bundle.js --format=iife --loader:.css=text",
@@ -9,10 +9,15 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "changelog": "node scripts/gen-changelog.js",
-    "test": "node test/commands.test.js && node test/version.test.js && node test/store.test.js && node test/history.test.js && node test/db.test.js && node test/filter.test.js && node test/where.test.js && node test/perf.test.js && node test/paging.test.js && node test/fk.test.js"
+    "test": "node test/commands.test.js && node test/version.test.js && node test/store.test.js && node test/history.test.js && node test/db.test.js && node test/filter.test.js && node test/where.test.js && node test/perf.test.js && node test/paging.test.js && node test/fk.test.js",
+    "icon": "node scripts/make-icon.js",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "dist:publish": "npm run build && electron-builder --win --publish always",
+    "pack": "npm run build && electron-builder --win --dir --publish never"
   },
   "license": "MIT",
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "mysql2": "^3.24.4",
     "pg": "^8.13.1",
     "pg-connection-string": "^2.7.0",
@@ -28,6 +33,54 @@
     "@codemirror/view": "^6.36.1",
     "@lezer/highlight": "^1.2.1",
     "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
     "esbuild": "^0.24.2"
+  },
+  "author": {
+    "name": "Endairion"
+  },
+  "build": {
+    "appId": "com.endairion.cobalt",
+    "productName": "Cobalt",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "assets/icon.png",
+      "package.json",
+      "!**/*.md"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "artifactName": "Cobalt-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cobalt",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Endairion",
+        "repo": "cobalt"
+      }
+    ]
   }
 }

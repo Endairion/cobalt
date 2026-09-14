@@ -2668,6 +2668,7 @@ function menuCommand(cmd) {
   window.__cobaltLastCommand = cmd;
   const tab = activeTab();
   switch (cmd) {
+    case 'help:update': api.app.checkUpdates(); break;
     case 'help:about': about.openAbout(); break;
     case 'help:changelog': about.openChangelog(); break;
     case 'help:whatsnew': about.openWhatsNew(state.appInfo ? [state.appInfo.releases[0]] : []); break;
@@ -2720,6 +2721,19 @@ function menuCommand(cmd) {
 }
 
 api.ui.onMenu(menuCommand);
+
+// An update downloading in the background says so rather than being invisible,
+// but never takes over the window — it installs when you quit.
+if (api.ui.onUpdateStatus) {
+  api.ui.onUpdateStatus((s) => {
+    if (s.kind === 'downloading') setStatus(`Downloading Cobalt ${s.version}…`);
+    else if (s.kind === 'progress') setStatus(`Downloading update… ${s.percent}%`);
+    else if (s.kind === 'ready') {
+      setStatus(`Cobalt ${s.version} is ready — it installs when you quit.`);
+      toast(`Update ${s.version} downloaded. It installs when you quit.`, 'ok');
+    }
+  });
+}
 
 /* ------------------------------- boot ------------------------------- */
 

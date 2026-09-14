@@ -9,6 +9,7 @@ const { History } = require('./history');
 const changelog = require('../shared/changelog');
 const pkg = require('../../package.json');
 const { menuFor, roleNames } = require('../shared/commands');
+const updates = require('./updates');
 
 const isMac = process.platform === 'darwin';
 const manager = new Manager();
@@ -65,6 +66,8 @@ function createWindow() {
     win.webContents.on('render-process-gone', (_e, d) => console.log('[renderer gone]', JSON.stringify(d)));
   }
   if (smokeTarget()) runSmoke(win);
+  // Never during a smoke run: a test should not be downloading an installer.
+  else updates.checkOnStartup(win);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -133,8 +136,15 @@ async function runSmoke(w) {
       // Optional real key presses, to prove accelerators reach the app.
       const keysArg = process.argv.find((a) => a.startsWith('--smoke-keys='));
       if (keysArg) {
+        // A test that presses keys needs the window actually focused — smoke
+        // mode otherwise shows it inactive on purpose, and Windows will not let
+        // focus() take the foreground from whatever you were doing. Menu
+        // accelerators only fire for the focused window, so for this one case
+        // the window is brought forward properly and put back after.
+        w.setAlwaysOnTop(true);
+        w.show();
         w.focus();
-        await wait(300);
+        await wait(900);
         for (const combo of keysArg.slice('--smoke-keys='.length).split(',')) {
           const parts = combo.split('+');
           const keyCode = parts.pop();
@@ -144,6 +154,7 @@ async function runSmoke(w) {
           w.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
           await wait(900);
         }
+        w.setAlwaysOnTop(false);
       }
 
       // Optional DOM-level step for interactions no menu command covers.
@@ -316,6 +327,9 @@ handle('app:metrics', () => {
 });
 handle('conn:killQuery', (id, pid, opts) => manager.killQuery(id, pid, opts));
 handle('app:engines', () => require('./drivers').list());
+handle('app:checkUpdates', () => updates.checkForUpdates(win, { interactive: true }));
+handle('app:releasesPage', () => updates.openReleasesPage());
+handle('app:updateStatus', () => updates.status());
 handle('conn:stats', (id, schema, table) => manager.tableStats(id, schema, table));
 
 handle('query:run', (id, tabKey, sql, opts) => manager.run(id, tabKey, sql, opts || {}));
