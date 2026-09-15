@@ -29,7 +29,7 @@ const NULL_TOKEN = Symbol('null');
 const UNSET = Symbol('unset');   // no staged value for this cell
 
 export class ResultGrid {
-  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, onCellMenu, onCursor, readOnly = false } = {}) {
+  constructor(host, { onDirtyChange, onStatus, onFilter, onSort, onNeedMore, onCellMenu, onCursor, onRowLeave, readOnly = false } = {}) {
     this.host = host;
     this.onDirtyChange = onDirtyChange || (() => {});
     this.onStatus = onStatus || (() => {});
@@ -38,6 +38,7 @@ export class ResultGrid {
     this.onNeedMore = onNeedMore || (() => {});
     this.onCellMenu = onCellMenu || (() => {});
     this.onCursor = onCursor || (() => {});
+    this.onRowLeave = onRowLeave || (() => {});
     this.loadingMore = false;
     this.readOnly = readOnly;
     this.hiddenCols = new Set();   // column indexes the viewer chose to hide
@@ -249,6 +250,16 @@ export class ResultGrid {
     return '';
   }
 
+  /** Whether one display row has anything staged on it. */
+  rowIsDirty(display) {
+    const ref = this.at(display);
+    if (ref.kind === 'row') {
+      return this.deletes.has(ref.idx) || !!(this.edits.get(ref.idx) || {}).size;
+    }
+    if (ref.kind === 'new') return !!this.inserts[ref.pos];
+    return false;
+  }
+
   dirtyCount() {
     let n = this.inserts.length + this.deletes.size;
     for (const [idx] of this.edits) if (!this.deletes.has(idx)) n++;
@@ -369,19 +380,29 @@ export class ResultGrid {
   }
 
   onMouseDown(e) {
+    // The right button opens the cell menu, which has a handler of its own.
+    if (e.button !== 0) return;
     const cell = e.target.closest('.gc[data-col]');
     if (!cell) return;
     const row = Number(cell.parentElement.dataset.row);
     const col = Number(cell.dataset.col);
+    // Clicking the cell already being edited would otherwise close and reopen
+    // the editor under the pointer, losing the caret position you clicked at.
+    if (this.editing && this.editing.row === row && this.editing.col === col) return;
     this.commitEditor();
     this.setCursor(row, col);
     this.el.focus();
+    // Clicking a value puts you in it. `quiet` because a read-only result would
+    // otherwise complain on every single click.
+    this.beginEdit(undefined, { quiet: true });
   }
 
   onDoubleClick(e) {
     const cell = e.target.closest('.gc[data-col]');
     if (!cell) return;
-    this.beginEdit();
+    // The first click already opened it; this is only here for the case where
+    // it could not, so the reason gets said out loud.
+    if (!this.editing) this.beginEdit();
   }
 
   setCursor(row, col, { scroll = false } = {}) {
@@ -393,10 +414,15 @@ export class ResultGrid {
       nextCol = vis.reduce((best, i) =>
         Math.abs(i - nextCol) < Math.abs(best - nextCol) ? i : best, vis[0]);
     }
+    const before = this.cursor.row;
     this.cursor = { row: Math.max(0, Math.min(total - 1, row)), col: nextCol };
     if (scroll) this.scrollToCursor();
     this.renderRows();
     this.emitCellStatus();
+    // Leaving a row you changed is the moment the change is finished, which is
+    // when it is worth asking whether to write it. Moving between columns of
+    // the same row is not — you are still in the middle of the row.
+    if (before !== this.cursor.row && this.rowIsDirty(before)) this.onRowLeave(before);
   }
 
   /** Move the cursor by whole visible columns, so hidden ones are skipped. */
@@ -516,16 +542,26 @@ export class ResultGrid {
 
   /* ------------------------------ editing ------------------------------ */
 
-  beginEdit(seedChar) {
+  /**
+   * `quiet` is for the edit a click asks for rather than one you asked for by
+   * name: there is no point telling someone the result is read-only every time
+   * they click a cell in it.
+   */
+  beginEdit(seedChar, { quiet = false } = {}) {
     if (!this.totalRows() || !this.columns.length) return;
+    // Never stack two editors on top of each other. Typing over a cell that is
+    // already open replaces what is in it, which is what the keystroke meant.
+    if (this.editing) this.commitEditor();
     if (!this.editable) {
-      this.onStatus(this.result && this.result.notEditableReason ? this.result.notEditableReason : 'Result is read-only.');
+      if (!quiet) {
+        this.onStatus(this.result && this.result.notEditableReason ? this.result.notEditableReason : 'Result is read-only.');
+      }
       return;
     }
     const ref = this.at(this.cursor.row);
     if (ref.kind === 'none') return;
     if (ref.kind === 'row' && this.deletes.has(ref.idx)) {
-      this.onStatus('Row is marked for deletion.');
+      if (!quiet) this.onStatus('Row is marked for deletion.');
       return;
     }
     const rowEl = this.body.querySelector(`.grow[data-row="${this.cursor.row}"]`);
@@ -574,11 +610,11 @@ export class ResultGrid {
     input.addEventListener('blur', () => this.commitEditor());
   }
 
-  cancelEditor() {
+  cancelEditor({ focus = true } = {}) {
     if (!this.editing) return;
     this.editing.input.remove();
     this.editing = null;
-    this.el.focus();
+    if (focus) this.el.focus();
   }
 
   commitEditor() {
@@ -592,7 +628,10 @@ export class ResultGrid {
     if (wasNull && text === '') { this.renderRows(); return; }
     const next = text;
     if (original !== null && String(original) === next) {
-      this.clearEdit(row, col);
+      // Opening a cell and closing it again without typing is not an edit, so
+      // it must not leave an undo step behind for Ctrl+Z to spend itself on.
+      if (this.stagedAt(row, col) !== undefined) this.clearEdit(row, col);
+      else this.renderRows();
     } else {
       this.setValue(row, col, next);
     }
@@ -634,6 +673,10 @@ export class ResultGrid {
   stageValue(display, col, value) {
     if (!this.editable) { this.onStatus('This result is read-only.'); return false; }
     if (this.at(display).kind === 'none') return false;
+    // The inspector has just said what this cell should be. An editor still
+    // open on it is holding the old text, and letting it commit on blur would
+    // quietly undo what was set here. Focus stays where it is.
+    if (this.editing) this.cancelEditor({ focus: false });
     this.setValue(display, col, value === null ? NULL_TOKEN : String(value));
     return true;
   }

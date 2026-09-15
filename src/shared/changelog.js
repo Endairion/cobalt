@@ -13,6 +13,20 @@
 
 const releases = [
   {
+    version: '0.26.1',
+    date: '2026-09-15',
+    title: 'Click a value to change it',
+    summary: 'Editing starts on the first click, and finishing a row offers to write it.',
+    changes: [
+      { type: 'changed', text: 'Clicking a value opens it for editing, rather than needing a double-click or a keystroke first. The text arrives selected, so typing replaces it; Escape backs out without changing anything; Enter takes you down a row and Tab across one.' },
+      { type: 'added', text: 'Leaving a row you changed asks whether to commit it. Moving between the columns of one row says nothing, because you are still in the middle of that row. Not now is taken at its word: the change stays staged and the question stops for the rest of the batch, since correcting one column down a list of rows leaves a row on every keystroke and being asked each time is how people learn to dismiss dialogs unread. It asks again once the batch has been committed or discarded.' },
+      { type: 'changed', text: 'Commit and Discard moved up beside Filter. They were sitting past + Row and Delete row, where they read as part of the row tools rather than as the button you go looking for once you have changed something. Ctrl+Shift+S still commits, and Ctrl+I still opens the value inspector.' },
+      { type: 'fixed', text: 'A commit that worked said it had failed. Refreshing the rows afterwards called a method the grid does not have, which threw, and the error handler reported "Commit failed (rolled back)" over a write that had already landed. The rows now reload properly - a paged or browsed tab keeps its filter and position.' },
+      { type: 'fixed', text: 'Opening a cell and closing it again without typing left an undo step behind, so the next Ctrl+Z appeared to do nothing. And a value set from the Value panel could be quietly undone by a cell editor still open on the same cell — the panel now wins, which is what you asked for by using it.' },
+      { type: 'changed', text: 'A read-only result no longer says so every time you click a cell in it. Clicking is how you edit now, and a message for every click is noise rather than news.' },
+    ],
+  },
+  {
     version: '0.26.0',
     date: '2026-09-14',
     title: 'Make things from the tree',

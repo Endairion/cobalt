@@ -68,9 +68,13 @@ const HELP = `
   const w = (ms) => new Promise(r => setTimeout(r, ms));
   const runQuery = async () => { window.__cobaltMenu('query:run'); await w(1800); };
   const cell = (row, col) => document.querySelector('.grow[data-row="' + row + '"] .gc[data-col="' + col + '"]');
-  const type = (el, ch) => {
-    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    document.querySelector('.grid').dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+  const key = (k, opts) => document.querySelector('.grid')
+    .dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...opts }));
+  // Walk to the cell with the arrows rather than clicking it: a click opens the
+  // editor now, and this is about the keystroke that lands on the grid itself.
+  const typeAt = (col, ch) => {
+    for (let i = 0; i < col; i++) key('ArrowRight');
+    key(ch);
   };
 `;
 
@@ -85,7 +89,7 @@ const HELP = `
     await runQuery();
     const barBefore = !document.getElementById('pending-bar').hidden;
     // What happens if you type while the grid has focus, meaning to filter.
-    type(cell(0, 2), 'x');
+    typeAt(2, 'x');
     await w(300);
     const editor = document.querySelector('.cell-editor');
     if (editor) { editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }

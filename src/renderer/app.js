@@ -1885,6 +1885,7 @@ function renderResults() {
       onNeedMore: () => loadPage(tab, { append: true }),
       onCellMenu: (row, col, at) => openCellMenu(tab, row, col, at),
       onCursor: () => renderInspector(),
+      onRowLeave: () => askToSave(tab),
       readOnly: !!(state.conns.get(tab.connId) || {}).readOnly,
     });
   }
@@ -1937,13 +1938,20 @@ function renderGridToolbar() {
     '<button class="btn small ghost" data-act="columns" title="Choose which columns to show">Columns</button>' +
     `<button class="btn small ${inspector.isOpen() ? 'primary' : 'ghost'}" data-act="inspect" title="Show the value under the cursor in full (Ctrl+I)">Value</button>`;
 
+  // Commit sits with Filter rather than after the row tools: it is the button
+  // you go looking for once you have changed something, and it was reading as
+  // part of "+ Row / Delete row" down there.
+  const commitBtn =
+    `<button class="btn small ${dirty ? 'primary' : 'ghost'}" data-act="commit" ${dirty ? '' : 'disabled'}
+      title="Write the staged changes to the database (Ctrl+Shift+S)">Commit${dirty ? ` (${g.changeSummary()})` : ''}</button>`;
+
   const actions = canEdit
     ? `<span class="spacer"></span>
+       ${commitBtn}
+       <button class="btn small ghost" data-act="discard" ${dirty ? '' : 'disabled'}>Discard</button>
        ${filterBtn}
        <button class="btn small ghost" data-act="add">+ Row</button>
        <button class="btn small ghost" data-act="del">Delete row</button>
-       <button class="btn small ${dirty ? 'primary' : ''}" data-act="commit" ${dirty ? '' : 'disabled'}>Commit${dirty ? ` (${g.changeSummary()})` : ''}</button>
-       <button class="btn small ghost" data-act="discard" ${dirty ? '' : 'disabled'}>Discard</button>
        ${pageSizePicker(ps)}
        <button class="btn small ghost" data-act="csv" title="Export these rows as CSV, JSON, SQL or Markdown">Export</button>`
     : `<span class="spacer"></span>${filterBtn}${pageSizePicker(ps)}<button class="btn small ghost" data-act="csv" title="Export these rows as CSV, JSON, SQL or Markdown">Export</button>`;
@@ -1998,7 +2006,7 @@ function handleGridAction(actEl) {
     case 'add': tab.grid.addRow(); break;
     case 'del': tab.grid.toggleDelete(); break;
     case 'commit': commitGrid(); break;
-    case 'discard': tab.grid.discard(); renderGridToolbar(); break;
+    case 'discard': tab.grid.discard(); tab.saveDeclined = false; renderGridToolbar(); break;
     case 'csv': exportResult(); break;
     case 'inspect': toggleInspector(); break;
     case 'count': countRows(tab); break;
@@ -2060,29 +2068,65 @@ function renderError(res) {
   el.gridHost.append(box);
 }
 
-async function commitGrid() {
+/**
+ * Finishing a row is the moment to ask whether to write it.
+ *
+ * Moving between the columns of one row is still the middle of that row, so
+ * nothing is said; moving off it means you are done, and this asks.
+ *
+ * "Not now" is taken at its word: the change stays staged, and the question
+ * stops for the rest of this batch rather than coming back on the next row.
+ * Someone correcting one column down a list of rows leaves a row on every
+ * Enter, and asking each time is how people learn to dismiss dialogs without
+ * reading them. The bar along the bottom goes on saying nothing is written,
+ * and Commit is right there; the question comes back once the batch has been
+ * committed or discarded.
+ */
+async function askToSave(tab) {
+  if (!tab || !tab.grid || tab.savePromptOpen || tab.saveDeclined) return;
+  if (!tab.grid.dirtyCount()) return;
+  tab.savePromptOpen = true;
+  try {
+    const wrote = await commitGrid({ asked: true });
+    if (!wrote) tab.saveDeclined = true;
+  } finally {
+    tab.savePromptOpen = false;
+  }
+}
+
+/** Resolves true if the changes were written. */
+async function commitGrid({ asked = false } = {}) {
   const tab = activeTab();
-  if (!tab || !tab.grid) return;
+  if (!tab || !tab.grid) return false;
   const change = tab.grid.buildChanges();
-  if (!change) return;
+  if (!change) return false;
   const summary = tab.grid.changeSummary();
   const ok = await confirm.ask({
-    title: 'Commit changes',
+    title: asked ? 'Commit this row?' : 'Commit changes',
     message: `Apply ${summary} to ${change.source.schema}.${change.source.table}?`,
-    detail: 'Runs inside a single transaction; any failure rolls the whole batch back.',
+    detail: asked
+      ? 'Runs inside a single transaction. Not now leaves it staged — nothing is lost, '
+        + 'and Commit writes it whenever you are ready.'
+      : 'Runs inside a single transaction; any failure rolls the whole batch back.',
     confirmLabel: 'Commit',
+    cancelLabel: asked ? 'Not now' : 'Cancel',
     destructive: !!change.deletes.length,
   });
-  if (!ok) return;
+  if (!ok) return false;
   try {
     const applied = await api.query.apply(tab.connId, change);
     toast(`Committed: ${applied.updated} updated, ${applied.inserted} inserted, ${applied.deleted} deleted.`, 'ok');
     tab.grid.discard();
-    if (tab.grid.activeFilters()) tab.grid.applyFilters();
+    tab.saveDeclined = false;
+    // Show what is actually there now. A paged or browsed tab reloads its page,
+    // which keeps the filter and the position; a plain query tab re-runs.
+    if (tab.pageState) await loadPage(tab);
     else await runScript(false);
+    return true;
   } catch (err) {
     const pg = err.pgError || {};
     toast(`Commit failed (rolled back): ${pg.detail || err.message}`, 'err');
+    return false;
   }
 }
 

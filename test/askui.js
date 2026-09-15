@@ -72,15 +72,19 @@ const HELP = `
   };
   const press = (key) => window.dispatchEvent(
     new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  const cell = (r, c) => document.querySelector('.grow[data-row="' + r + '"] .gc[data-col="' + c + '"]');
   // Stage an edit so the "you have uncommitted changes" question is real.
   const stageOne = async () => {
     window.__cobaltMenu('query:run'); await w(1800);
-    const c = document.querySelector('.grow[data-row="0"] .gc[data-col="2"]');
-    c.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    document.querySelector('.grid').dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-    await w(300);
+    // Clicking a value opens the editor on it.
+    cell(0, 2).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    await w(250);
     const ed = document.querySelector('.cell-editor');
-    if (ed) ed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    ed.value = 'x';
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+    // Close it by moving within the same row. Leaving the row would raise the
+    // commit question, and that is not the one under test here.
+    cell(0, 1).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
     await w(400);
   };
 `;

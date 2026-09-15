@@ -1,0 +1,296 @@
+'use strict';
+/* Clicking a value edits it, leaving a changed row asks whether to write it,
+   saying "not now" keeps the change without nagging, and Ctrl+I still opens
+   the inspector on whatever is under the cursor.
+   Run: node test/clickeditui.js   (needs cobalt-test-pg on :15432) */
+
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const electron = require('electron');
+const { Client } = require('pg');
+
+const outDir = path.join(__dirname, '..', 'shots');
+fs.mkdirSync(outDir, { recursive: true });
+const CFG = { host: 'localhost', port: 15432, database: 'cobalt', user: 'cobalt', password: 'cobalt' };
+
+const sql = async (text) => {
+  const c = new Client(CFG);
+  await c.connect();
+  const r = await c.query(text);
+  await c.end();
+  return r.rows;
+};
+
+const SEED_SQL = 'select id, label, note from shop.tmp_click order by id;';
+
+const seed = (readOnly = false) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cobalt-click-'));
+  fs.writeFileSync(path.join(dir, 'cobalt-connections.json'), JSON.stringify({
+    connections: [{
+      id: 's1', name: 'Test DB', host: 'localhost', port: 15432, database: 'cobalt',
+      user: 'cobalt', ssl: 'disable', order: 0, password: { plain: 'cobalt' }, readOnly,
+    }],
+    workspace: {
+      tabs: [{ title: 'rows', sql: SEED_SQL, savedId: 's1' }],
+      activeIndex: 0, pageSize: 200, openConnections: ['s1'], activeSavedId: 's1',
+    },
+    seenVersion: require('../package.json').version,
+  }, null, 2));
+  return dir;
+};
+
+const run = (file, js, { readOnly = false } = {}) => new Promise((resolve) => {
+  const profile = seed(readOnly);
+  const p = spawn(electron, ['.', `--smoke=${path.join(outDir, file)}`,
+    `--user-data-dir=${profile}`, `--smoke-js=${js}`], { cwd: path.join(__dirname, '..') });
+  let buf = '';
+  p.stdout.on('data', (d) => { buf += d; process.stdout.write(d); });
+  p.stderr.on('data', (d) => { buf += d; });
+  p.on('close', (code) => {
+    fs.rmSync(profile, { recursive: true, force: true });
+    const bad = /\[renderer ERROR\]|Uncaught|is not a function|is not defined/.test(buf);
+    if (bad) console.log(buf.slice(0, 3000));
+    resolve({ ok: code === 0 && !bad, out: buf });
+  });
+  setTimeout(() => p.kill(), 90000);
+});
+
+const readJs = (out) => JSON.parse((/\[smoke\] js (.*)/.exec(out) || [])[1] || '{}');
+
+let fails = 0;
+const expect = (cond, label) => {
+  console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}`);
+  if (!cond) fails++;
+};
+
+const HELP = `
+  const w = (ms) => new Promise(r => setTimeout(r, ms));
+  const cell = (row, col) => document.querySelector(
+    '.grow[data-row="' + row + '"] .gc[data-col="' + col + '"]');
+  // A left button press is what opens the editor now, so say which button.
+  const click = (el) => el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+  const editor = () => document.querySelector('.cell-editor');
+  const type = (text) => {
+    const e = editor();
+    e.value = text;
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const ask = () => document.querySelector('.ask-layer .ask-modal');
+  const run = async () => { window.__cobaltMenu('query:run'); await w(1800); };
+`;
+
+(async () => {
+  const reset = async () => {
+    await sql('drop table if exists shop.tmp_click');
+    await sql(`create table shop.tmp_click (
+      id integer primary key, label text, note text)`);
+    await sql(`insert into shop.tmp_click values
+      (1, 'one', 'first'), (2, 'two', 'second'), (3, 'three', 'third')`);
+  };
+
+  console.log('\nclicking a value puts you in it');
+
+  await reset();
+  const open = await run('click-open.png', `(async () => {
+    ${HELP}
+    await w(900);
+    await run();
+    const before = !!editor();
+    click(cell(0, 1));
+    await w(300);
+    const e = editor();
+    return {
+      before,
+      opened: !!e,
+      value: e ? e.value : null,
+      selected: e ? (e.selectionStart === 0 && e.selectionEnd === e.value.length) : null,
+    };
+  })()`);
+  if (!open.ok) fails++;
+  const o = readJs(open.out);
+  expect(o.before === false, 'nothing is being edited to start with');
+  expect(o.opened === true, 'one click opens the editor');
+  expect(o.value === 'one', `on the value that was clicked (got ${JSON.stringify(o.value)})`);
+  expect(o.selected === true, 'with the text selected, so typing replaces it');
+
+  console.log('\nand a read-only result just says nothing');
+
+  const ro = await run('click-readonly.png', `(async () => {
+    ${HELP}
+    await w(900);
+    await run();
+    click(cell(0, 1));
+    await w(300);
+    return { opened: !!editor(), status: document.getElementById('status-right').textContent };
+  })()`, { readOnly: true });
+  if (!ro.ok) fails++;
+  const r = readJs(ro.out);
+  expect(r.opened === false, 'no editor opens on a read-only connection');
+  expect(!/read-only/i.test(r.status || ''),
+    `and it does not complain on every click (got ${JSON.stringify(r.status)})`);
+
+  console.log('\nmoving within the row says nothing; leaving it asks');
+
+  await reset();
+  const asks = await run('click-asks.png', `(async () => {
+    ${HELP}
+    await w(900);
+    await run();
+    click(cell(0, 1));
+    await w(250);
+    type('ONE');
+    click(cell(0, 2));          // same row, next column
+    await w(500);
+    const askedWithinRow = !!ask();
+    click(cell(1, 1));          // a different row
+    await w(700);
+    const m = ask();
+    return {
+      askedWithinRow,
+      askedOnLeaving: !!m,
+      title: m ? m.querySelector('h2').textContent : null,
+      buttons: m ? [...m.querySelectorAll('[data-ask]')].map(b => b.textContent) : null,
+      staged: window.__cobaltDirty(),
+    };
+  })()`);
+  if (!asks.ok) fails++;
+  const a = readJs(asks.out);
+  expect(a.staged === 1, `the edit is staged (got ${a.staged})`);
+  expect(a.askedWithinRow === false, 'moving to the next column of the same row asks nothing');
+  expect(a.askedOnLeaving === true, 'leaving the row does ask');
+  expect(/Commit this row/.test(a.title || ''),
+    `and the question says so (got ${JSON.stringify(a.title)})`);
+  expect((a.buttons || []).join('|') === 'Not now|Commit',
+    `with Not now beside Commit (got ${JSON.stringify(a.buttons)})`);
+
+  console.log('\nCommit writes it');
+
+  await reset();
+  const wrote = await run('click-commit.png', `(async () => {
+    ${HELP}
+    await w(900);
+    await run();
+    click(cell(0, 1));
+    await w(250);
+    type('ONE');
+    click(cell(1, 1));
+    await w(700);
+    document.querySelector('[data-ask="yes"]').click();
+    await w(2500);
+    return {
+      staged: window.__cobaltDirty(),
+      // A commit that worked must not then say it failed.
+      toasts: [...document.querySelectorAll('.toast')].map(n => n.textContent),
+      shown: window.__cobaltCell(0, 1),
+    };
+  })()`);
+  if (!wrote.ok) fails++;
+  const wr = readJs(wrote.out);
+  expect(wr.staged === 0, 'nothing is left staged afterwards');
+  expect((wr.toasts || []).some((t) => /Committed/.test(t)) && !(wr.toasts || []).some((t) => /failed/i.test(t)),
+    `and it says so rather than claiming it failed (got ${JSON.stringify(wr.toasts)})`);
+  expect(String(wr.shown) === 'ONE',
+    `the grid shows the committed value (got ${JSON.stringify(wr.shown)})`);
+  const after = await sql('select label from shop.tmp_click where id = 1');
+  expect(after[0] && after[0].label === 'ONE',
+    `and the row is changed on the server (got ${JSON.stringify(after[0])})`);
+
+  console.log('\nNot now keeps the change, and does not ask again for it');
+
+  await reset();
+  const later = await run('click-notnow.png', `(async () => {
+    ${HELP}
+    await w(900);
+    await run();
+    click(cell(0, 1));
+    await w(250);
+    type('ONE');
+    click(cell(1, 1));
+    await w(700);
+    document.querySelector('[data-ask="no"]').click();
+    await w(400);
+    const afterDeclining = window.__cobaltDirty();
+    // Wander off the row again. It has been asked and answered.
+    click(cell(2, 1));
+    await w(600);
+    const askedTwice = !!ask();
+    // Nor does a further change: "not now" holds for the whole batch, because
+    // correcting one column down a list leaves a row on every keystroke.
+    click(cell(2, 2));
+    await w(250);
+    type('THIRD');
+    click(cell(0, 1));
+    await w(700);
+    const askedAfterNewEdit = !!ask();
+    // Committing ends the batch, so the next row asks again.
+    document.querySelector('#grid-toolbar [data-act="commit"]').click();
+    await w(600);
+    const askedOnCommitButton = !!ask();
+    if (askedOnCommitButton) { document.querySelector('[data-ask="yes"]').click(); await w(2500); }
+    click(cell(0, 1));
+    await w(250);
+    type('AGAIN');
+    click(cell(1, 1));
+    await w(800);
+    return {
+      afterDeclining, askedTwice, askedAfterNewEdit,
+      askedOnNextBatch: !!ask(),
+      barShown: true,
+    };
+  })()`);
+  if (!later.ok) fails++;
+  const l = readJs(later.out);
+  expect(l.afterDeclining === 1, `the change is still staged (got ${l.afterDeclining})`);
+  expect(l.askedTwice === false, 'leaving another row does not ask the same thing again');
+  expect(l.askedAfterNewEdit === false, 'and neither does a further edit — it was taken at its word');
+  expect(l.askedOnNextBatch === true, 'but after committing, the next row asks again');
+
+  console.log('\nthe Commit button sits with Filter, and Ctrl+I still works');
+
+  await reset();
+  const bits = await run('click-toolbar.png', `(async () => {
+    ${HELP}
+    await w(900);
+    await run();
+    const labels = [...document.querySelectorAll('#grid-toolbar [data-act]')]
+      .map(b => b.dataset.act);
+    click(cell(0, 1));
+    await w(250);
+    type('ONE');
+    // Moving within the row closes the editor and stages the change without
+    // raising the question, which is what we want before reading the toolbar.
+    click(cell(0, 2));
+    await w(400);
+    const commit = document.querySelector('#grid-toolbar [data-act="commit"]');
+    // Ctrl+I is the inspector, and the click-to-edit above must not have
+    // stopped the cursor tracking it depends on.
+    window.__cobaltMenu('grid:inspect');
+    await w(400);
+    const insp = window.__cobaltInspector();
+    return {
+      labels,
+      commitEnabled: !commit.disabled,
+      commitText: commit.textContent.trim(),
+      inspectorOpen: !!insp.open,
+      // What the inspector is showing is whatever is under the cursor.
+      cursorValue: window.__cobaltCell(0, 1),
+    };
+  })()`);
+  if (!bits.ok) fails++;
+  const b = readJs(bits.out);
+  const order = (b.labels || []).join(',');
+  expect(/commit,discard,filter/.test(order),
+    `Commit and Discard sit just before Filter (got ${order})`);
+  expect(b.commitEnabled === true && /Commit \(/.test(b.commitText || ''),
+    `the button says what it would write (got ${JSON.stringify(b.commitText)})`);
+  expect(b.inspectorOpen === true, 'Ctrl+I still opens the inspector');
+  expect(String(b.cursorValue) === 'ONE',
+    `with the staged edit under the cursor for it to show (got ${JSON.stringify(b.cursorValue)})`);
+
+  await sql('drop table if exists shop.tmp_click');
+
+  console.log(`\n${fails ? `${fails} failed` : 'all checks passed'}\n`);
+  process.exit(fails ? 1 : 0);
+})();
