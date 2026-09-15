@@ -133,6 +133,33 @@ async function runSmoke(w) {
         await wait(300);
       }
 
+      // A real mouse click on whatever a selector matches.
+      //
+      // A dispatched MouseEvent is not the same thing and never was: it carries
+      // no default behaviour, so it cannot move focus the way a press does.
+      // Anything that hangs on where the focus lands after a click looks fine
+      // under a synthetic one and fails for a person.
+      const clickArg = process.argv.find((a) => a.startsWith('--smoke-click='));
+      if (clickArg) {
+        w.setAlwaysOnTop(true);
+        w.show();
+        w.focus();
+        await wait(600);
+        for (const sel of clickArg.slice('--smoke-click='.length).split('|')) {
+          const at = await w.webContents.executeJavaScript(`(() => {
+            const el = document.querySelector(${JSON.stringify(sel)});
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+          })()`);
+          if (!at) { console.log(`[smoke] click: nothing matches ${sel}`); continue; }
+          w.webContents.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+          w.webContents.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+          await wait(450);
+        }
+        w.setAlwaysOnTop(false);
+      }
+
       // Real characters into whatever has focus. Separate from --smoke-keys
       // because that one is about accelerators: it names keys and waits most of
       // a second between them. This is for checking that typing does what

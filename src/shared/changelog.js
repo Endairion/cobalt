@@ -13,6 +13,16 @@
 
 const releases = [
   {
+    version: '0.26.2',
+    date: '2026-09-15',
+    title: 'Clicking a value actually works now',
+    summary: 'The editor 0.26.1 opened on a click closed again before you could type.',
+    changes: [
+      { type: 'fixed', text: 'Click-to-edit did not work with a real mouse. The editor opened, and then the press went on to do what a press normally does - move focus to what was clicked - which landed on the grid, blurred the editor and closed it again. Clicking looked like it did nothing, and double-clicking did the same thing twice.' },
+      { type: 'fixed', text: 'The test that was supposed to cover it dispatched MouseEvents, which carry no default behaviour and so never moved focus. It passed on a feature that did not work. The harness can now send real presses and keystrokes, and the check runs through those instead.' },
+    ],
+  },
+  {
     version: '0.26.1',
     date: '2026-09-15',
     title: 'Click a value to change it',

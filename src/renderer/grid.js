@@ -394,7 +394,13 @@ export class ResultGrid {
     this.el.focus();
     // Clicking a value puts you in it. `quiet` because a read-only result would
     // otherwise complain on every single click.
-    this.beginEdit(undefined, { quiet: true });
+    if (this.beginEdit(undefined, { quiet: true })) {
+      // And the press must not go on to do what a press normally does, which is
+      // move focus to what was clicked. That happens after this handler returns,
+      // so it would land on the grid, blur the editor that was just opened, and
+      // close it again — leaving a click that looks like it did nothing.
+      e.preventDefault();
+    }
   }
 
   onDoubleClick(e) {
@@ -547,8 +553,9 @@ export class ResultGrid {
    * name: there is no point telling someone the result is read-only every time
    * they click a cell in it.
    */
+  /** Resolves to true if an editor is now open. */
   beginEdit(seedChar, { quiet = false } = {}) {
-    if (!this.totalRows() || !this.columns.length) return;
+    if (!this.totalRows() || !this.columns.length) return false;
     // Never stack two editors on top of each other. Typing over a cell that is
     // already open replaces what is in it, which is what the keystroke meant.
     if (this.editing) this.commitEditor();
@@ -556,18 +563,18 @@ export class ResultGrid {
       if (!quiet) {
         this.onStatus(this.result && this.result.notEditableReason ? this.result.notEditableReason : 'Result is read-only.');
       }
-      return;
+      return false;
     }
     const ref = this.at(this.cursor.row);
-    if (ref.kind === 'none') return;
+    if (ref.kind === 'none') return false;
     if (ref.kind === 'row' && this.deletes.has(ref.idx)) {
       if (!quiet) this.onStatus('Row is marked for deletion.');
-      return;
+      return false;
     }
     const rowEl = this.body.querySelector(`.grow[data-row="${this.cursor.row}"]`);
     if (!rowEl) { this.scrollToCursor(); this.renderRows(); }
     const cellEl = this.body.querySelector(`.grow[data-row="${this.cursor.row}"] .gc[data-col="${this.cursor.col}"]`);
-    if (!cellEl) return;
+    if (!cellEl) return false;
 
     const current = this.valueAt(this.cursor.row, this.cursor.col);
     const input = document.createElement('textarea');
@@ -608,6 +615,7 @@ export class ResultGrid {
       }
     });
     input.addEventListener('blur', () => this.commitEditor());
+    return true;
   }
 
   cancelEditor({ focus = true } = {}) {

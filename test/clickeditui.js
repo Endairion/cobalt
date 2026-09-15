@@ -41,10 +41,10 @@ const seed = (readOnly = false) => {
   return dir;
 };
 
-const run = (file, js, { readOnly = false } = {}) => new Promise((resolve) => {
+const run = (file, js, { readOnly = false, extra = [] } = {}) => new Promise((resolve) => {
   const profile = seed(readOnly);
   const p = spawn(electron, ['.', `--smoke=${path.join(outDir, file)}`,
-    `--user-data-dir=${profile}`, `--smoke-js=${js}`], { cwd: path.join(__dirname, '..') });
+    `--user-data-dir=${profile}`, ...extra, `--smoke-js=${js}`], { cwd: path.join(__dirname, '..') });
   let buf = '';
   p.stdout.on('data', (d) => { buf += d; process.stdout.write(d); });
   p.stderr.on('data', (d) => { buf += d; });
@@ -64,6 +64,15 @@ const expect = (cond, label) => {
   console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}`);
   if (!cond) fails++;
 };
+
+// Runs before the harness presses anything, so there are rows to press on.
+const PREP_RUN = `(async () => {
+  const w = (ms) => new Promise(r => setTimeout(r, ms));
+  await w(2200);
+  window.__cobaltMenu('query:run');
+  await w(2200);
+  return true;
+})()`;
 
 const HELP = `
   const w = (ms) => new Promise(r => setTimeout(r, ms));
@@ -288,6 +297,59 @@ const HELP = `
   expect(b.inspectorOpen === true, 'Ctrl+I still opens the inspector');
   expect(String(b.cursorValue) === 'ONE',
     `with the staged edit under the cursor for it to show (got ${JSON.stringify(b.cursorValue)})`);
+
+  console.log('\nwith a real mouse press, not a dispatched one');
+
+  // This is the check that matters, and the one that was missing.
+  //
+  // A dispatched MouseEvent carries no default behaviour. A real press moves
+  // focus to what was clicked *after* the handler returns — which lands on the
+  // grid, blurs the editor that was just opened and closes it again. Under
+  // synthetic events the feature looked perfect and did nothing for a person.
+  await reset();
+  const real = await run('click-real.png', `(async () => {
+    const w = (ms) => new Promise(r => setTimeout(r, ms));
+    await w(300);
+    const ed = document.querySelector('.cell-editor');
+    return {
+      editors: document.querySelectorAll('.cell-editor').length,
+      value: ed ? ed.value : null,
+      focused: document.activeElement === ed,
+    };
+  })()`, { extra: [
+    `--smoke-prep=${PREP_RUN}`,
+    '--smoke-click=.grow[data-row="0"] .gc[data-col="1"]',
+    '--smoke-type=REALLY',
+  ] });
+  if (!real.ok) fails++;
+  const rc = readJs(real.out);
+  expect(rc.editors === 1, `a real press opens the editor and it stays open (got ${rc.editors})`);
+  expect(rc.focused === true, 'and keeps the caret, so what you type goes into it');
+  expect(rc.value === 'REALLY', `which is where the typing landed (got ${JSON.stringify(rc.value)})`);
+
+  console.log('\nand Enter on top of that stages it and asks');
+
+  await reset();
+  const realDone = await run('click-real-enter.png', `(async () => {
+    const w = (ms) => new Promise(r => setTimeout(r, ms));
+    await w(500);
+    const m = document.querySelector('.ask-layer .ask-modal');
+    return {
+      staged: window.__cobaltDirty(),
+      cell: window.__cobaltCell(0, 1),
+      asked: !!m,
+    };
+  })()`, { extra: [
+    `--smoke-prep=${PREP_RUN}`,
+    '--smoke-click=.grow[data-row="0"] .gc[data-col="1"]',
+    '--smoke-type=REALLY',
+    '--smoke-keys=Return',
+  ] });
+  if (!realDone.ok) fails++;
+  const rd = readJs(realDone.out);
+  expect(rd.cell === 'REALLY', `the typed value is staged on the cell (got ${JSON.stringify(rd.cell)})`);
+  expect(rd.staged === 1, `one change staged (got ${rd.staged})`);
+  expect(rd.asked === true, 'and dropping to the next row raises the question');
 
   await sql('drop table if exists shop.tmp_click');
 
