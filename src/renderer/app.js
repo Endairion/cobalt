@@ -852,7 +852,7 @@ el.tree.addEventListener('click', async (e) => {
     if (!conn) return;
     if (conn.id !== state.activeConnId) focusConnection(conn.id);
     const [schema, name] = relRow.dataset.rel.split('|');
-    browseTable(schema, name, conn.id);
+    browseTable(schema, name, conn.id).catch((err) => toast(err.message, 'err'));
   }
 });
 
@@ -1628,9 +1628,38 @@ function browseTabFor(connId) {
  * on, and "Open as query" hands it to a normal tab — it just does not need to
  * occupy the screen to look at a table.
  */
-function browseTable(schema, table, connId) {
+async function browseTable(schema, table, connId) {
   const sql = `SELECT *\nFROM ${qrel(schema, table)};`;
   const existing = browseTabFor(connId);
+
+  // One browse tab per connection, so opening another table replaces what is
+  // in this one — including anything staged on it. That used to happen in
+  // silence, which is the worst way to lose work: no error, no question, the
+  // edits simply were not there any more.
+  if (existing && existing.grid && existing.grid.dirtyCount()) {
+    const from = existing.source ? `${existing.source.schema}.${existing.source.table}` : existing.title;
+    const answer = await confirm.choose({
+      title: 'Uncommitted changes',
+      message: `${existing.grid.changeSummary()} on ${from} have not been written.`,
+      detail: `Opening ${schema}.${table} replaces what is on screen. Committing writes them first; `
+        + 'discarding throws them away.',
+      buttons: [
+        { key: 'stay', label: 'Stay here', kind: 'ghost' },
+        { key: 'discard', label: 'Discard', kind: 'danger' },
+        { key: 'commit', label: 'Commit', kind: 'primary' },
+      ],
+    });
+    // Escape, the backdrop and Stay here all mean the same thing.
+    if (answer !== 'discard' && answer !== 'commit') return;
+    if (answer === 'commit') {
+      selectTab(existing.id);
+      if (!await commitGrid({ confirmed: true })) return;   // the write failed
+    } else {
+      existing.grid.discard();
+    }
+    existing.saveDeclined = false;
+  }
+
   const tab = existing || newTab({ connId, kind: 'data', title: table, sql });
 
   tab.kind = 'data';
@@ -2094,14 +2123,20 @@ async function askToSave(tab) {
   }
 }
 
-/** Resolves true if the changes were written. */
-async function commitGrid({ asked = false } = {}) {
+/**
+ * Resolves true if the changes were written.
+ *
+ * `confirmed` is for a caller that has already asked — choosing Commit in the
+ * "you have uncommitted changes" question is an answer, and asking again on top
+ * of it would be asking the same thing twice.
+ */
+async function commitGrid({ asked = false, confirmed = false } = {}) {
   const tab = activeTab();
   if (!tab || !tab.grid) return false;
   const change = tab.grid.buildChanges();
   if (!change) return false;
   const summary = tab.grid.changeSummary();
-  const ok = await confirm.ask({
+  const ok = confirmed || await confirm.ask({
     title: asked ? 'Commit this row?' : 'Commit changes',
     message: `Apply ${summary} to ${change.source.schema}.${change.source.table}?`,
     detail: asked

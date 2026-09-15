@@ -3,6 +3,20 @@
 Generated from `src/shared/changelog.js` by `npm run changelog` — edit that file, not this one.
 The same data is what the app shows under Help → What's New.
 
+## 0.26.3 — Opening another table stops eating your edits
+*2026-09-15*
+
+Staged changes were discarded in silence when you clicked a different table.
+
+### Added
+- It now asks, with all three answers rather than two: Commit writes them and moves on, Discard throws them away and moves on, Stay here leaves everything where it is. Escape and clicking outside both mean stay, because the answer you get by refusing to answer should be the safe one.
+
+### Changed
+- Choosing Commit there writes straight away instead of asking a second time. You have already said what you wanted.
+
+### Fixed
+- Opening another table threw away anything staged on the one you were looking at, with no question and no warning. There is one browse tab per connection, so the next table replaces what is in it - and the edits simply were not there any more. No error, nothing to undo.
+
 ## 0.26.2 — Clicking a value actually works now
 *2026-09-15*
 

@@ -351,6 +351,73 @@ const HELP = `
   expect(rd.staged === 1, `one change staged (got ${rd.staged})`);
   expect(rd.asked === true, 'and dropping to the next row raises the question');
 
+  console.log('\nopening another table does not throw the changes away');
+
+  // One browse tab per connection, so the next table replaces what is in it.
+  // That used to happen in silence, which is the worst way to lose work.
+  const SWITCH = (answer) => `(async () => {
+    ${HELP}
+    await w(2600);
+    const rel = (name) => [...document.querySelectorAll('.tree-row.rel')]
+      .find(n => n.querySelector('.name').textContent === name);
+    rel('tmp_click').click();
+    await w(2600);
+    click(cell(0, 1));
+    await w(250);
+    type('SWITCHED');
+    click(cell(0, 2));               // close the editor, stay on the row
+    await w(400);
+    const staged = window.__cobaltDirty();
+    rel('docs').click();             // a different table
+    await w(700);
+    const m = document.querySelector('.ask-layer .ask-modal');
+    const asked = {
+      shown: !!m,
+      title: m ? m.querySelector('h2').textContent : null,
+      buttons: m ? [...m.querySelectorAll('[data-choice]')].map(b => b.textContent) : null,
+      message: m ? m.querySelector('.ask-message').textContent : null,
+    };
+    if (m) {
+      const b = m.querySelector('[data-choice="${answer}"]');
+      if (b) b.click(); else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    }
+    await w(3000);
+    const t = window.__cobalt().tabs.find(x => x.id === window.__cobalt().activeTabId);
+    return { staged, asked, nowShowing: t ? t.title : null, stillStaged: window.__cobaltDirty() };
+  })()`;
+
+  await reset();
+  const stay = await run('switch-stay.png', SWITCH('stay'));
+  if (!stay.ok) fails++;
+  const st = readJs(stay.out);
+  expect(st.staged === 1, `an edit is staged on the first table (got ${st.staged})`);
+  expect(st.asked && st.asked.shown === true, 'opening another table asks instead of discarding in silence');
+  expect(/Uncommitted changes/.test((st.asked || {}).title || ''),
+    `and says what it is about (got ${JSON.stringify((st.asked || {}).title)})`);
+  expect(((st.asked || {}).buttons || []).join('|') === 'Stay here|Discard|Commit',
+    `with all three answers (got ${JSON.stringify((st.asked || {}).buttons)})`);
+  expect(st.nowShowing === 'tmp_click', `Stay here stays (got ${JSON.stringify(st.nowShowing)})`);
+  expect(st.stillStaged === 1, `with the change intact (got ${st.stillStaged})`);
+
+  await reset();
+  const dropped = await run('switch-discard.png', SWITCH('discard'));
+  if (!dropped.ok) fails++;
+  const dp = readJs(dropped.out);
+  expect(dp.nowShowing === 'docs', `Discard moves on (got ${JSON.stringify(dp.nowShowing)})`);
+  expect(dp.stillStaged === 0, `with nothing staged (got ${dp.stillStaged})`);
+  const notWritten = await sql('select label from shop.tmp_click where id = 1');
+  expect(notWritten[0] && notWritten[0].label === 'one',
+    `and nothing written (got ${JSON.stringify(notWritten[0])})`);
+
+  await reset();
+  const saved = await run('switch-commit.png', SWITCH('commit'));
+  if (!saved.ok) fails++;
+  const sv = readJs(saved.out);
+  expect(sv.stillStaged === 0, `Commit leaves nothing staged (got ${sv.stillStaged})`);
+  const written = await sql('select label from shop.tmp_click where id = 1');
+  expect(written[0] && written[0].label === 'SWITCHED',
+    `and the change is on the server (got ${JSON.stringify(written[0])})`);
+
   await sql('drop table if exists shop.tmp_click');
 
   console.log(`\n${fails ? `${fails} failed` : 'all checks passed'}\n`);

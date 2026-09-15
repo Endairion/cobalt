@@ -92,6 +92,70 @@ export function ask({
   });
 }
 
+/**
+ * A question with more than two answers.
+ *
+ * `buttons` is [{ key, label, kind }] in reading order, left to right, and it
+ * resolves the key that was pressed. Escape and the backdrop resolve null,
+ * which every caller should treat as "do nothing" — the safe answer is always
+ * the one you get by refusing to answer.
+ *
+ * Two of these questions are worth having three answers: leaving work behind
+ * is not a yes-or-no, because "keep it and don't go" is a different thing from
+ * "go and throw it away".
+ */
+export function choose({
+  title = 'Cobalt', message = '', detail = '', code = false, buttons = [],
+} = {}) {
+  return new Promise((resolve) => {
+    const returnTo = document.activeElement;
+    let settled = false;
+
+    const layer = document.createElement('div');
+    layer.className = 'overlay ask-layer';
+    layer.innerHTML = `
+      <div class="modal ask-modal" role="alertdialog" aria-modal="true">
+        <h2>${esc(title)}</h2>
+        <div class="body">
+          <div class="ask-message">${esc(message)}</div>
+          ${detail ? `<div class="ask-detail${code ? ' code' : ''}">${esc(detail)}</div>` : ''}
+        </div>
+        <div class="foot">
+          <span class="spacer"></span>
+          ${buttons.map((b) => `<button class="btn ${esc(b.kind || 'ghost')}" data-choice="${esc(b.key)}">${esc(b.label)}</button>`).join('')}
+        </div>
+      </div>`;
+
+    const finish = (key) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('keydown', onKey, true);
+      layer.remove();
+      if (returnTo && returnTo.isConnected && returnTo.focus) returnTo.focus();
+      resolve(key);
+    };
+
+    // No Enter shortcut here: with three answers there is no one obvious yes,
+    // and guessing which one someone meant is how you lose their work.
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault(); e.stopPropagation(); finish(null);
+    };
+
+    layer.addEventListener('mousedown', (e) => { if (e.target === layer) finish(null); });
+    layer.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-choice]');
+      if (b) finish(b.dataset.choice);
+    });
+
+    window.addEventListener('keydown', onKey, true);
+    document.body.append(layer);
+
+    const first = layer.querySelector('[data-choice]');
+    if (first) setTimeout(() => first.focus(), 0);
+  });
+}
+
 /** A statement rather than a question: one button, and nothing to decide. */
 export function tell(opts) {
   return ask({ confirmLabel: 'OK', ...opts, okOnly: true });
